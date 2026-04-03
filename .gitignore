@@ -5,3 +5,4 @@ __pycache__/
 .streamlit/
 *.csv
 *.xlsx
+.ace-tool/
