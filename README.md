@@ -23,15 +23,17 @@
 
 ### 1. 克隆项目
 ```bash
-git clone https://github.com/your-username/youtube-brand-extractor.git
+git clone https://github.com/Leezk-2018/brand-extractor-app.git
 cd youtube-brand-extractor
 ```
 
 ### 2. 环境配置
 建议使用虚拟环境：
 ```bash
-# 创建虚拟环境
+# 创建虚拟环境(需要python3.11+)
 python -m venv venv
+#或者多python环境下指定
+py -3 -m venv venv
 
 # 激活虚拟环境 (Windows)
 .\venv\Scripts\activate
