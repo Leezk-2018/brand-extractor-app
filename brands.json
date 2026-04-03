@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Logitech",
+    "aliases": ["Logitech", "Logi"],
+    "exclude": []
+  },
+  {
+    "name": "Razer",
+    "aliases": ["Razer"],
+    "exclude": []
+  },
+  {
+    "name": "Elgato",
+    "aliases": ["Elgato"],
+    "exclude": []
+  },
+  {
+    "name": "Sony",
+    "aliases": ["Sony", "Sony Alpha"],
+    "exclude": []
+  },
+  {
+    "name": "Canon",
+    "aliases": ["Canon"],
+    "exclude": []
+  },
+  {
+    "name": "Microsoft",
+    "aliases": ["Microsoft", "Surface"],
+    "exclude": []
+  },
+  {
+    "name": "Insta360",
+    "aliases": ["Insta360"],
+    "exclude": []
+  },
+  {
+    "name": "Red",
+    "aliases": ["RED", "RED camera"],
+    "exclude": ["credit", "reddit"]
+  }
+]
