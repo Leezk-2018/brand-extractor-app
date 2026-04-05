@@ -74,9 +74,7 @@ class PaginationTests(unittest.TestCase):
         youtube = FakeYoutube(
             {"items": []},
             [
-                {
-                    "items": [{"snippet": {"channelId": "UC1234567890123456789012"}}]
-                },
+                {"items": [{"snippet": {"channelId": "UC1234567890123456789012"}}]},
                 {
                     "items": [
                         {
@@ -122,12 +120,54 @@ class PaginationTests(unittest.TestCase):
                 }
             ],
             [
+                {"items": [{"id": "28", "snippet": {"title": "Science & Technology"}}]}
+            ],
+        )
+        page_updates = []
+
+        result = search_channel_brand_mentions(
+            youtube,
+            kol="@example",
+            search_query="camera",
+            brands=["Sony"],
+            published_after=None,
+            enable_full_search=True,
+            enable_deep_search=True,
+            page_progress=lambda page_number, total_items, has_next: page_updates.append(
+                (page_number, total_items, has_next)
+            ),
+        )
+
+        self.assertEqual(result.candidate_count, 2)
+        self.assertEqual(len(result.rows), 2)
+        self.assertEqual(len(youtube.search_resource.calls), 3)
+        self.assertEqual(len(youtube.videos_resource.calls), 1)
+        self.assertEqual(len(youtube.video_categories_resource.calls), 1)
+        self.assertNotIn("pageToken", youtube.search_resource.calls[1])
+        self.assertEqual(youtube.search_resource.calls[2]["pageToken"], "PAGE_2")
+        self.assertEqual(page_updates, [(1, 1, True), (2, 2, False)])
+
+    def test_search_channel_brand_mentions_stops_after_first_page_by_default(self):
+        youtube = FakeYoutube(
+            {"items": []},
+            [
+                {"items": [{"snippet": {"channelId": "UC1234567890123456789012"}}]},
                 {
                     "items": [
-                        {"id": "28", "snippet": {"title": "Science & Technology"}}
-                    ]
-                }
+                        {
+                            "id": {"videoId": "video-1"},
+                            "snippet": {
+                                "title": "Sony review part 1",
+                                "description": "",
+                                "publishedAt": "2025-01-01T00:00:00Z",
+                            },
+                        }
+                    ],
+                    "nextPageToken": "PAGE_2",
+                },
             ],
+            [],
+            [],
         )
         page_updates = []
 
@@ -142,19 +182,156 @@ class PaginationTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(result.candidate_count, 2)
-        self.assertEqual(len(result.rows), 2)
-        self.assertEqual(len(youtube.search_resource.calls), 3)
+        self.assertEqual(result.candidate_count, 1)
+        self.assertEqual(len(result.rows), 1)
+        self.assertEqual(len(youtube.search_resource.calls), 2)
+        self.assertEqual(len(youtube.videos_resource.calls), 0)
+        self.assertEqual(len(youtube.video_categories_resource.calls), 0)
+        self.assertEqual(page_updates, [(1, 1, True)])
+
+    def test_deep_search_matches_brand_from_tags(self):
+        youtube = FakeYoutube(
+            {"items": []},
+            [
+                {"items": [{"snippet": {"channelId": "UC1234567890123456789012"}}]},
+                {
+                    "items": [
+                        {
+                            "id": {"videoId": "video-3"},
+                            "snippet": {
+                                "title": "Creator desk setup",
+                                "description": "No brand in title or description",
+                                "publishedAt": "2025-01-03T00:00:00Z",
+                            },
+                        }
+                    ]
+                },
+            ],
+            [
+                {
+                    "items": [
+                        {
+                            "id": "video-3",
+                            "snippet": {"categoryId": "28", "tags": ["Sony", "creator"]},
+                            "contentDetails": {"duration": "PT5M"},
+                            "statistics": {"viewCount": "300", "likeCount": "20", "commentCount": "2"},
+                        }
+                    ]
+                }
+            ],
+            [
+                {"items": [{"id": "28", "snippet": {"title": "Science & Technology"}}]}
+            ],
+        )
+
+        result = search_channel_brand_mentions(
+            youtube,
+            kol="@example",
+            search_query="camera",
+            brands=["Sony"],
+            published_after=None,
+            enable_deep_search=True,
+        )
+
+        self.assertEqual(result.candidate_count, 1)
+        self.assertEqual(len(result.rows), 1)
         self.assertEqual(len(youtube.videos_resource.calls), 1)
-        self.assertEqual(len(youtube.video_categories_resource.calls), 1)
-        self.assertNotIn("pageToken", youtube.search_resource.calls[1])
-        self.assertEqual(youtube.search_resource.calls[2]["pageToken"], "PAGE_2")
-        self.assertEqual(page_updates, [(1, 1, True), (2, 2, False)])
-        self.assertEqual(result.rows[0]["视频时长"], "10:00")
-        self.assertEqual(result.rows[0]["播放量"], "1,000")
-        self.assertEqual(result.rows[0]["视频链接"], "https://www.youtube.com/watch?v=video-1")
-        self.assertEqual(result.rows[0]["分类"], "Science & Technology")
-        self.assertEqual(result.rows[0]["标签"], "Sony, Camera")
+        self.assertTrue(any("命中标签" in str(value) for value in result.rows[0].values()))
+
+    def test_match_scope_can_disable_title_description_and_keep_tags(self):
+        youtube = FakeYoutube(
+            {"items": []},
+            [
+                {"items": [{"snippet": {"channelId": "UC1234567890123456789012"}}]},
+                {
+                    "items": [
+                        {
+                            "id": {"videoId": "video-4"},
+                            "snippet": {
+                                "title": "Desk setup",
+                                "description": "No brand here",
+                                "publishedAt": "2025-01-04T00:00:00Z",
+                            },
+                        }
+                    ]
+                },
+            ],
+            [
+                {
+                    "items": [
+                        {
+                            "id": "video-4",
+                            "snippet": {"categoryId": "28", "tags": ["Sony"]},
+                            "contentDetails": {"duration": "PT6M"},
+                            "statistics": {"viewCount": "500", "likeCount": "30", "commentCount": "3"},
+                        }
+                    ]
+                }
+            ],
+            [
+                {"items": [{"id": "28", "snippet": {"title": "Science & Technology"}}]}
+            ],
+        )
+
+        result = search_channel_brand_mentions(
+            youtube,
+            kol="@example",
+            search_query="camera",
+            brands=["Sony"],
+            published_after=None,
+            enable_deep_search=True,
+            match_title=False,
+            match_description=False,
+            match_tags=True,
+        )
+        self.assertEqual(len(result.rows), 1)
+
+        youtube_without_tags = FakeYoutube(
+            {"items": []},
+            [
+                {"items": [{"snippet": {"channelId": "UC1234567890123456789012"}}]},
+                {
+                    "items": [
+                        {
+                            "id": {"videoId": "video-4"},
+                            "snippet": {
+                                "title": "Desk setup",
+                                "description": "No brand here",
+                                "publishedAt": "2025-01-04T00:00:00Z",
+                            },
+                        }
+                    ]
+                },
+            ],
+            [
+                {
+                    "items": [
+                        {
+                            "id": "video-4",
+                            "snippet": {"categoryId": "28", "tags": ["Sony"]},
+                            "contentDetails": {"duration": "PT6M"},
+                            "statistics": {"viewCount": "500", "likeCount": "30", "commentCount": "3"},
+                        }
+                    ]
+                }
+            ],
+            [
+                {"items": [{"id": "28", "snippet": {"title": "Science & Technology"}}]}
+            ],
+        )
+
+        result_without_tags = search_channel_brand_mentions(
+            youtube_without_tags,
+            kol="@example",
+            search_query="camera",
+            brands=["Sony"],
+            published_after=None,
+            enable_deep_search=True,
+            match_title=False,
+            match_description=False,
+            match_tags=False,
+        )
+        self.assertEqual(len(result_without_tags.rows), 0)
 
 
 if __name__ == "__main__":

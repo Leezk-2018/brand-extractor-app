@@ -137,13 +137,21 @@ def extract_brands(
 def explain_brand_matches_for_video(
     title: str,
     description: str,
+    tags: list[str] | None,
     brands: list[str] | list[BrandRule],
+    match_title: bool = True,
+    match_description: bool = True,
+    match_tags: bool = True,
     log_detail: LogFn | None = None,
 ) -> list[BrandMatchDetail]:
     rules = _ensure_brand_rules(brands)
     evaluations: list[BrandMatchDetail] = []
-    evaluations.extend(evaluate_brand_matches(title or "", rules, source="title"))
-    evaluations.extend(evaluate_brand_matches(description or "", rules, source="description"))
+    if match_title:
+        evaluations.extend(evaluate_brand_matches(title or "", rules, source="title"))
+    if match_description:
+        evaluations.extend(evaluate_brand_matches(description or "", rules, source="description"))
+    if match_tags:
+        evaluations.extend(evaluate_brand_matches(" ".join(tags or []), rules, source="tags"))
     matched = _dedupe_match_details([item for item in evaluations if item.excluded_by is None])
     blocked = _dedupe_match_details([item for item in evaluations if item.excluded_by is not None])
     _log(
@@ -159,6 +167,11 @@ def search_channel_brand_mentions(
     search_query: str,
     brands: list[str] | list[BrandRule],
     published_after: str | None,
+    enable_full_search: bool = False,
+    enable_deep_search: bool = False,
+    match_title: bool = True,
+    match_description: bool = True,
+    match_tags: bool = True,
     log_detail: LogFn | None = None,
     log_json: LogJsonFn | None = None,
     page_progress: PageProgressFn | None = None,
@@ -186,24 +199,30 @@ def search_channel_brand_mentions(
         youtube,
         kol=kol,
         request_body=video_search_body,
+        enable_full_search=enable_full_search,
         log_detail=log_detail,
         log_json=log_json,
         page_progress=page_progress,
     )
-    enriched_by_video_id = _fetch_video_details_map(
-        youtube,
-        kol=kol,
-        items=items,
-        log_detail=log_detail,
-        log_json=log_json,
-    )
-    category_map = _fetch_video_category_map(
-        youtube,
-        kol=kol,
-        video_details=enriched_by_video_id,
-        log_detail=log_detail,
-        log_json=log_json,
-    )
+    enriched_by_video_id: dict[str, dict[str, Any]] = {}
+    category_map: dict[str, str] = {}
+    if enable_deep_search:
+        enriched_by_video_id = _fetch_video_details_map(
+            youtube,
+            kol=kol,
+            items=items,
+            log_detail=log_detail,
+            log_json=log_json,
+        )
+        category_map = _fetch_video_category_map(
+            youtube,
+            kol=kol,
+            video_details=enriched_by_video_id,
+            log_detail=log_detail,
+            log_json=log_json,
+        )
+    else:
+        _log(log_detail, f"videos.list skipped kol={kol!r} enable_deep_search=False")
     result.candidate_count = len(items)
     _log(log_detail, f"video search parsed: items_count={result.candidate_count} kol={kol!r}")
 
@@ -214,6 +233,9 @@ def search_channel_brand_mentions(
             rules,
             video_detail=enriched_by_video_id.get(item["id"]["videoId"]),
             category_map=category_map,
+            match_title=match_title,
+            match_description=match_description,
+            match_tags=match_tags,
             log_detail=log_detail,
         )
         if row is None:
@@ -228,6 +250,7 @@ def _fetch_all_search_video_items(
     youtube,
     kol: str,
     request_body: dict[str, Any],
+    enable_full_search: bool = False,
     log_detail: LogFn | None = None,
     log_json: LogJsonFn | None = None,
     page_progress: PageProgressFn | None = None,
@@ -259,6 +282,12 @@ def _fetch_all_search_video_items(
             page_progress(page_number, len(items), bool(next_page_token))
 
         if not next_page_token:
+            break
+        if not enable_full_search:
+            _log(
+                log_detail,
+                f"video search.list stop after first page kol={kol!r} enable_full_search=False nextPageToken={next_page_token!r}",
+            )
             break
 
         page_token = next_page_token
@@ -348,6 +377,9 @@ def _build_result_row(
     brands: list[BrandRule],
     video_detail: dict[str, Any] | None = None,
     category_map: dict[str, str] | None = None,
+    match_title: bool = True,
+    match_description: bool = True,
+    match_tags: bool = True,
     log_detail: LogFn | None = None,
 ) -> dict[str, str] | None:
     snippet = item["snippet"]
@@ -359,11 +391,21 @@ def _build_result_row(
         _log(log_detail, f"result_row skip missing_video_id title={title[:80]!r}",)
         return None
     video_url = f"https://www.youtube.com/watch?v={video_id}"
-    match_details = explain_brand_matches_for_video(title, description, brands, log_detail=log_detail)
-    mentioned_brands = _dedupe_brand_names([detail.name for detail in match_details])
     detail_snippet = (video_detail or {}).get("snippet", {})
     detail_content = (video_detail or {}).get("contentDetails", {})
     detail_stats = (video_detail or {}).get("statistics", {})
+    detail_tags = detail_snippet.get("tags", [])
+    match_details = explain_brand_matches_for_video(
+        title,
+        description,
+        detail_tags,
+        brands,
+        match_title=match_title,
+        match_description=match_description,
+        match_tags=match_tags,
+        log_detail=log_detail,
+    )
+    mentioned_brands = _dedupe_brand_names([detail.name for detail in match_details])
     category_id = detail_snippet.get("categoryId", "")
 
     if not mentioned_brands:
@@ -379,7 +421,7 @@ def _build_result_row(
         "视频标题": title,
         "视频链接": video_url,
         "提及的品牌": ", ".join(mentioned_brands),
-        "匹配详情": "; ".join(f"{detail.name} <- {detail.alias} ({detail.source})" for detail in match_details),
+        "匹配详情": "; ".join(_format_match_detail(detail) for detail in match_details),
         "视频时长": _format_duration(detail_content.get("duration", "")),
         "播放量": _format_count(detail_stats.get("viewCount", "")),
         "点赞数": _format_count(detail_stats.get("likeCount", "")),
@@ -441,6 +483,17 @@ def _detail_to_log_payload(detail: BrandMatchDetail) -> dict[str, str]:
     if detail.excluded_by:
         payload["excluded_by"] = detail.excluded_by
     return payload
+
+
+def _format_match_detail(detail: BrandMatchDetail) -> str:
+    source_label_map = {
+        "title": "标题",
+        "description": "描述",
+        "tags": "标签",
+    }
+    source_label = source_label_map.get(detail.source, detail.source)
+    alias = detail.alias or detail.name
+    return f"{detail.name}：命中{source_label}（{alias}）"
 
 
 def _extract_video_id(item: dict[str, Any]) -> str:

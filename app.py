@@ -379,10 +379,10 @@ def _log_detail_dialog():
                 else:
                     st.code(item["entry"], language=None)
 
-st.title("📹 YouTube KOL 品牌提取工具")
+st.title("📹 YouTube KOL 品牌提取工具(Beta)")
 st.markdown("该工具基于 YouTube Data API 官方接口，用于自动化提取指定博主视频中提及的品牌。")
 
-api_key, search_query, use_date_filter, start_date, brands_list = render_sidebar(
+api_key, search_query, use_date_filter, start_date, brands_list, enable_full_search, enable_deep_search, match_title, match_description, match_tags = render_sidebar(
     log_count=len(st.session_state.get("lee_debug_logs", [])),
     open_log_dialog=_log_detail_dialog,
 )
@@ -416,6 +416,18 @@ if st.button("🚀 开始提取", type="primary"):
             f"api_key={_mask_api_key(api_key)} search_query={search_query!r} "
             f"use_date_filter={use_date_filter} start_date={start_date!r} "
             f"kol_count={len(kol_list)} brand_count={len(brands_list)}"
+        )
+        _summary_event(
+            f"search mode | full_search {'on' if enable_full_search else 'off'} | deep_search {'on' if enable_deep_search else 'off'}"
+        )
+        _log_detail(
+            f"run search_mode: enable_full_search={enable_full_search} enable_deep_search={enable_deep_search}"
+        )
+        _summary_event(
+            f"match scope | title {'on' if match_title else 'off'} | description {'on' if match_description else 'off'} | tags {'on' if match_tags else 'off'}"
+        )
+        _log_detail(
+            f"run match_scope: match_title={match_title} match_description={match_description} match_tags={match_tags}"
         )
         if not api_key:
             _summary_event("中止 | 未填写 API Key", level="error")
@@ -472,6 +484,11 @@ if st.button("🚀 开始提取", type="primary"):
                     search_query,
                     brand_rules,
                     published_after_str,
+                    enable_full_search=enable_full_search,
+                    enable_deep_search=enable_deep_search,
+                    match_title=match_title,
+                    match_description=match_description,
+                    match_tags=match_tags,
                     log_detail=_log_detail,
                     log_json=_log_detail_json,
                     page_progress=lambda page_number, total_items, has_next, _i=i, _kol=kol, _total=total_kols: _summary_pagination(
