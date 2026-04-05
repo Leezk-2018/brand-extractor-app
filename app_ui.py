@@ -84,38 +84,9 @@ def render_sidebar(
         brands_list = [brand.strip() for brand in brands_input.split("\n") if brand.strip()]
         brand_rules_payload, brand_rules_error = _prepare_brand_rules_state(brands_list)
 
-        status_text = "高级规则：有错误" if brand_rules_error else f"高级规则：{len(brand_rules_payload or [])} 条"
-        info_col, button_col = st.columns([1.8, 0.7])
-        with info_col:
-            st.caption(status_text)
-        with button_col:
-            st.markdown(
-                """
-                <style>
-                div[data-testid="stSidebar"] .stButton:has(button[kind="tertiary"]) {
-                    display: flex;
-                    justify-content: flex-end;
-                }
-                div[data-testid="stSidebar"] .stButton:has(button[kind="tertiary"]) button[kind="tertiary"] {
-                    color: #dc2626;
-                    text-decoration: underline;
-                    padding: 0 !important;
-                    min-height: 0 !important;
-                    height: auto !important;
-                    background: transparent !important;
-                    border: none !important;
-                    box-shadow: none !important;
-                    outline: none !important;
-                }
-                div[data-testid="stSidebar"] .stButton:has(button[kind="tertiary"]) button[kind="tertiary"] p {
-                    margin: 0;
-                    line-height: 1.2;
-                }
-                </style>
-                """,
-                unsafe_allow_html=True,
-            )
-            if st.button("高级配置", type="tertiary"):
+        button_row = st.columns([1.8, 0.7])
+        with button_row[0]:
+            if st.button("高级配置"):
                 if st.session_state.get("brand_rules_applied_text") is not None:
                     st.session_state["brand_rules_editor_text"] = st.session_state["brand_rules_applied_text"]
                 elif st.session_state.get("brand_rules_editor_text") in (None, ""):
@@ -124,6 +95,11 @@ def render_sidebar(
                     )
                 st.session_state["brand_rules_editor_version"] = st.session_state.get("brand_rules_editor_version", 0) + 1
                 st.session_state["brand_rules_dialog_open"] = True
+
+        status_text = "高级规则：有错误" if brand_rules_error else f"高级规则：{len(brand_rules_payload or [])} 条"
+        info_col, button_col = st.columns([1.8, 0.7])
+        with info_col:
+            st.caption(status_text)
 
         if st.session_state.get("brand_rules_dialog_open"):
             _brand_rules_dialog(brands_list)
