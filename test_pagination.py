@@ -1,5 +1,6 @@
 import unittest
 
+from brand_rules import BrandRule
 from extractor_core import search_channel_brand_mentions
 
 
@@ -70,6 +71,9 @@ class FakeYoutube:
 
 
 class PaginationTests(unittest.TestCase):
+    def setUp(self):
+        self.sony_rules = [BrandRule(name="Sony", aliases=["Sony"])]
+
     def test_search_channel_brand_mentions_fetches_all_pages(self):
         youtube = FakeYoutube(
             {"items": []},
@@ -129,7 +133,7 @@ class PaginationTests(unittest.TestCase):
             youtube,
             kol="@example",
             search_query="camera",
-            brands=["Sony"],
+            brands=self.sony_rules,
             published_after=None,
             enable_full_search=True,
             enable_deep_search=True,
@@ -175,7 +179,7 @@ class PaginationTests(unittest.TestCase):
             youtube,
             kol="@example",
             search_query="camera",
-            brands=["Sony"],
+            brands=self.sony_rules,
             published_after=None,
             page_progress=lambda page_number, total_items, has_next: page_updates.append(
                 (page_number, total_items, has_next)
@@ -228,7 +232,7 @@ class PaginationTests(unittest.TestCase):
             youtube,
             kol="@example",
             search_query="camera",
-            brands=["Sony"],
+            brands=self.sony_rules,
             published_after=None,
             enable_deep_search=True,
         )
@@ -277,7 +281,7 @@ class PaginationTests(unittest.TestCase):
             youtube,
             kol="@example",
             search_query="camera",
-            brands=["Sony"],
+            brands=self.sony_rules,
             published_after=None,
             enable_deep_search=True,
             match_title=False,
@@ -324,7 +328,7 @@ class PaginationTests(unittest.TestCase):
             youtube_without_tags,
             kol="@example",
             search_query="camera",
-            brands=["Sony"],
+            brands=self.sony_rules,
             published_after=None,
             enable_deep_search=True,
             match_title=False,

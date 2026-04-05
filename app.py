@@ -13,6 +13,7 @@ from app_ui import (
     render_summary_panel,
     update_summary_panel,
 )
+from brand_rules import build_rules_from_payload
 from extractor_core import (
     build_published_after,
     get_youtube_service as build_youtube_service,
@@ -29,9 +30,7 @@ if not _LD.handlers:
     _LD.propagate = False
 
 _LEE_DEBUG_MAX_LINES = 4000
-_LEE_SUMMARY_MAX_LINES = 120
-_LEE_SUMMARY_EVENT_LIMIT = 80
-# 仅在本轮「开始提取」运行期间指向 expander 内的 st.empty，仅刷新摘要（勿存 session_state）
+# 仅在本轮执行期间指向 expander 内的 st.empty，仅刷新运行状态（勿存 session_state）
 _LIVE_LOG_EMPTY = None
 
 
@@ -58,8 +57,9 @@ def _log_detail(msg: str, exc_info: bool = False, level: str = "INFO") -> None:
         del buf[: len(buf) - _LEE_DEBUG_MAX_LINES]
 
 
-def _new_summary_state() -> dict:
+def _new_run_state() -> dict:
     return {
+        "status": "idle",
         "meta": {},
         "current": {},
         "stats": {
@@ -72,32 +72,54 @@ def _new_summary_state() -> dict:
             "matched_rows": 0,
         },
         "events": [],
+        "kols": [],
+        "results": [],
+        "result_urls": [],
+        "next_kol_index": 0,
+        "last_error": "",
     }
 
 
-def _summary_state() -> dict:
-    state = st.session_state.get("lee_debug_summary")
+def _run_state() -> dict:
+    state = st.session_state.get("current_run_state")
     if not isinstance(state, dict):
-        state = _new_summary_state()
-        st.session_state["lee_debug_summary"] = state
+        state = _new_run_state()
+        st.session_state["current_run_state"] = state
     return state
 
 
 def _refresh_summary() -> None:
     if _LIVE_LOG_EMPTY is not None:
-        update_summary_panel(_LIVE_LOG_EMPTY, _summary_state())
+        update_summary_panel(_LIVE_LOG_EMPTY, _run_state())
 
 
-def _summary_reset(**meta) -> None:
-    state = _new_summary_state()
-    state["meta"] = meta
-    state["stats"]["total_kols"] = meta.get("total_kols", 0)
-    st.session_state["lee_debug_summary"] = state
+def _set_run_status(status: str) -> None:
+    _run_state()["status"] = status
     _refresh_summary()
 
 
-def _summary_event(message: str, level: str = "info") -> None:
-    state = _summary_state()
+def _run_reset(**meta) -> None:
+    state = _new_run_state()
+    state["status"] = "running"
+    state["meta"] = meta
+    state["stats"]["total_kols"] = meta.get("total_kols", 0)
+    state["kols"] = [
+        {
+            "kol": kol,
+            "status": "pending",
+            "candidate_count": 0,
+            "matched_count": 0,
+            "message": "",
+        }
+        for kol in meta.get("kol_list", [])
+    ]
+    st.session_state["current_run_state"] = state
+    st.session_state["last_extract_results"] = []
+    _refresh_summary()
+
+
+def _run_event(message: str, level: str = "info") -> None:
+    state = _run_state()
     events = state.setdefault("events", [])
     events.append(
         {
@@ -106,32 +128,67 @@ def _summary_event(message: str, level: str = "info") -> None:
             "message": message,
         }
     )
-    if len(events) > _LEE_SUMMARY_EVENT_LIMIT:
-        del events[: len(events) - _LEE_SUMMARY_EVENT_LIMIT]
+    if len(events) > 80:
+        del events[: len(events) - 80]
     _refresh_summary()
 
 
-def _summary_current(index: int, kol: str, stage: str) -> None:
-    state = _summary_state()
+def _run_current(index: int, kol: str, stage: str) -> None:
+    state = _run_state()
     state["current"] = {"index": index, "kol": kol, "stage": stage}
     _refresh_summary()
 
 
-def _summary_pagination(index: int, total: int, kol: str, page_number: int, total_items: int, has_next: bool) -> None:
-    suffix = " | more" if has_next else " | final"
-    _summary_current(index, kol, f"search_videos page={page_number} total_items={total_items}{suffix}")
-    _summary_event(f"[{index}/{total}] {kol} | page {page_number} | total_items {total_items}" + (" | more" if has_next else " | final"))
+def _run_stage_pagination(index: int, kol: str, page_number: int, total_items: int, has_next: bool) -> None:
+    suffix = "（还有下一页）" if has_next else "（最后一页）"
+    _run_current(index, kol, f"搜索视频，第 {page_number} 页，已拿到 {total_items} 条 {suffix}")
 
 
-def _summary_add_stats(**updates) -> None:
-    stats = _summary_state().setdefault("stats", {})
+def _run_add_stats(**updates) -> None:
+    stats = _run_state().setdefault("stats", {})
     for key, value in updates.items():
         stats[key] = stats.get(key, 0) + value
     _refresh_summary()
 
 
+def _run_set_kol(index: int, **updates) -> None:
+    state = _run_state()
+    if 0 <= index < len(state.get("kols", [])):
+        state["kols"][index].update(updates)
+    _refresh_summary()
+
+
+def _run_append_results(rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    state = _run_state()
+    result_urls = set(state.setdefault("result_urls", []))
+    results = state.setdefault("results", [])
+    added = 0
+    for row in rows:
+        video_url = row.get("视频链接", "")
+        if video_url and video_url in result_urls:
+            continue
+        results.append(row)
+        if video_url:
+            result_urls.add(video_url)
+        added += 1
+    state["result_urls"] = list(result_urls)
+    st.session_state["last_extract_results"] = list(results)
+    _refresh_summary()
+    return added
+
+
+def _run_mark_paused(message: str) -> None:
+    state = _run_state()
+    state["status"] = "paused"
+    state["last_error"] = message
+    _run_event(message, level="error")
+
+
+
 def _log_summary(msg: str) -> None:
-    _summary_event(msg)
+    _run_event(msg)
 
 
 def _mask_api_key(key: str) -> str:
@@ -185,8 +242,8 @@ def _log_entry_text(raw) -> str:
 # 标准频道 ID：UC + 22 位（与 Data API channelId 一致）；避免把纯 handle 当成 ID
 st.set_page_config(page_title="YouTube Brand Extractor", layout="wide")
 st.session_state.setdefault("lee_debug_logs", [])
-if not isinstance(st.session_state.get("lee_debug_summary"), dict):
-    st.session_state["lee_debug_summary"] = _new_summary_state()
+if not isinstance(st.session_state.get("current_run_state"), dict):
+    st.session_state["current_run_state"] = _new_run_state()
 
 # Streamlit 的 data-testid="stDialog" 在 Base Web Modal 里是「整屏遮罩 Root」，
 # 若对其设置 width/max-width（如之前的 112rem），遮罩会变窄导致右侧露底、面板偏左。
@@ -379,17 +436,17 @@ def _log_detail_dialog():
                 else:
                     st.code(item["entry"], language=None)
 
-st.title("📹 YouTube KOL 品牌提取工具(Beta)")
-st.markdown("该工具基于 YouTube Data API 官方接口，用于自动化提取指定博主视频中提及的品牌。")
+st.title("YouTube 品牌提取助手")
+st.markdown("批量扫描 YouTube 频道内容，找出视频中提到的品牌，并导出结果。")
 
-api_key, search_query, use_date_filter, start_date, brands_list, enable_full_search, enable_deep_search, match_title, match_description, match_tags = render_sidebar(
+api_key, search_query, use_date_filter, start_date, brands_list, brand_rules_payload, brand_rules_error, enable_full_search, enable_deep_search, match_title, match_description, match_tags = render_sidebar(
     log_count=len(st.session_state.get("lee_debug_logs", [])),
     open_log_dialog=_log_detail_dialog,
 )
 kol_list = render_main_inputs()
 render_quota_warning(len(kol_list))
 summary_display = render_summary_panel()
-update_summary_panel(summary_display, st.session_state.get("lee_debug_summary"))
+update_summary_panel(summary_display, _run_state())
 
 # --- 核心功能函数 ---
 @st.cache_resource(show_spinner=False)
@@ -398,48 +455,103 @@ def get_youtube_service(api_key):
 
 
 # --- 执行逻辑 ---
-if st.button("🚀 开始提取", type="primary"):
+run_state = _run_state()
+can_resume = run_state.get("status") == "paused" and run_state.get("next_kol_index", 0) < run_state.get("stats", {}).get("total_kols", 0)
+
+start_col, resume_col = st.columns([1.2, 1.0])
+start_new_run = start_col.button("开始提取", type="primary", use_container_width=True)
+resume_run = resume_col.button("继续上次任务", disabled=not can_resume, use_container_width=True)
+
+if start_new_run or resume_run:
     try:
-        st.session_state["lee_debug_summary"] = _new_summary_state()
         _LIVE_LOG_EMPTY = summary_display
-        _summary_reset(
-            total_kols=len(kol_list),
-            brand_count=len(brands_list),
-            search_query=search_query,
-            published_after=build_published_after(start_date) or "off",
-        )
-        _summary_event(
-            f"任务开始 | KOL {len(kol_list)} | brands {len(brands_list)} | date_filter {'on' if use_date_filter else 'off'}"
-        )
-        _log_detail(
-            "run start: button clicked "
-            f"api_key={_mask_api_key(api_key)} search_query={search_query!r} "
-            f"use_date_filter={use_date_filter} start_date={start_date!r} "
-            f"kol_count={len(kol_list)} brand_count={len(brands_list)}"
-        )
-        _summary_event(
-            f"search mode | full_search {'on' if enable_full_search else 'off'} | deep_search {'on' if enable_deep_search else 'off'}"
-        )
+        resume_mode = bool(resume_run and can_resume)
+
+        if resume_mode:
+            state = _run_state()
+            state["status"] = "running"
+            state["last_error"] = ""
+            _run_event("继续上次任务")
+            _log_detail(
+                f"run resume: next_kol_index={state.get('next_kol_index', 0)} total_kols={state.get('stats', {}).get('total_kols', 0)}"
+            )
+        else:
+            _run_reset(
+                total_kols=len(kol_list),
+                brand_count=len(brands_list),
+                search_query=search_query,
+                published_after=build_published_after(start_date) or "off",
+                kol_list=kol_list,
+                brands_list=brands_list,
+                brand_rules_payload=brand_rules_payload,
+                use_date_filter=use_date_filter,
+                start_date=str(start_date) if start_date else None,
+                api_key=api_key,
+                enable_full_search=enable_full_search,
+                enable_deep_search=enable_deep_search,
+                match_title=match_title,
+                match_description=match_description,
+                match_tags=match_tags,
+            )
+            _run_event(f"任务开始 | KOL {len(kol_list)} | 品牌 {len(brands_list)}")
+            _log_detail(
+                "run start: button clicked "
+                f"api_key={_mask_api_key(api_key)} search_query={search_query!r} "
+                f"use_date_filter={use_date_filter} start_date={start_date!r} "
+                f"kol_count={len(kol_list)} brand_count={len(brands_list)}"
+            )
+
+            if not api_key:
+                _set_run_status("error")
+                _run_event("中止 | 未填写 API Key", level="error")
+                _log_detail("run abort: missing api_key", level="ERROR")
+                st.error("请在左侧侧边栏填入 API Key！")
+                st.stop()
+
+            if not kol_list:
+                _set_run_status("error")
+                _run_event("中止 | KOL 列表为空", level="error")
+                _log_detail("run abort: empty kol_list", level="ERROR")
+                st.error("请填入至少一个 KOL！")
+                st.stop()
+
+            if not brands_list:
+                _set_run_status("error")
+                _run_event("中止 | 品牌列表为空", level="error")
+                _log_detail("run abort: empty brands_list", level="ERROR")
+                st.error("请至少填写一个品牌！")
+                st.stop()
+
+            if brand_rules_error:
+                _set_run_status("error")
+                _run_event("中止 | 高级品牌规则有误", level="error")
+                _log_detail(f"run abort: invalid brand_rules_payload err={brand_rules_error!r}", level="ERROR")
+                st.error(brand_rules_error)
+                st.stop()
+
+        state = _run_state()
+        meta = state.get("meta", {})
+        api_key = api_key or meta.get("api_key", "")
+        search_query = meta.get("search_query", search_query)
+        enable_full_search = meta.get("enable_full_search", enable_full_search)
+        enable_deep_search = meta.get("enable_deep_search", enable_deep_search)
+        match_title = meta.get("match_title", match_title)
+        match_description = meta.get("match_description", match_description)
+        match_tags = meta.get("match_tags", match_tags)
+        brands_list = meta.get("brands_list", brands_list)
+        kol_list = meta.get("kol_list", kol_list)
+        brand_rules_payload = meta.get("brand_rules_payload", brand_rules_payload)
+        published_after_str = meta.get("published_after")
+        if published_after_str == "off":
+            published_after_str = None
+
         _log_detail(
             f"run search_mode: enable_full_search={enable_full_search} enable_deep_search={enable_deep_search}"
-        )
-        _summary_event(
-            f"match scope | title {'on' if match_title else 'off'} | description {'on' if match_description else 'off'} | tags {'on' if match_tags else 'off'}"
         )
         _log_detail(
             f"run match_scope: match_title={match_title} match_description={match_description} match_tags={match_tags}"
         )
-        if not api_key:
-            _summary_event("中止 | 未填写 API Key", level="error")
-            _log_detail("run abort: missing api_key", level="ERROR")
-            st.error("请在左侧侧边栏填入 API Key！")
-            st.stop()
-
-        if not kol_list:
-            _summary_event("中止 | KOL 列表为空", level="error")
-            _log_detail("run abort: empty kol_list", level="ERROR")
-            st.error("请填入至少一个 KOL！")
-            st.stop()
+        _log_detail(f"run published_after_str={published_after_str!r}")
 
         _log_detail(
             f"get_youtube_service request: build(youtube, v3) api_key={_mask_api_key(api_key)}"
@@ -447,35 +559,39 @@ if st.button("🚀 开始提取", type="primary"):
         youtube = get_youtube_service(api_key)
         if youtube:
             _log_detail("get_youtube_service response: client built ok")
-            _summary_event("YouTube API 客户端就绪")
+            _run_event("YouTube API 客户端就绪")
         else:
             _log_detail(
-                "get_youtube_service response: None（构建失败，详见上方摘要或终端控制台栈）",
+                "get_youtube_service response: None（构建失败，详见详细日志）",
                 level="ERROR",
             )
-            _summary_event("YouTube API 客户端构建失败", level="error")
+            _set_run_status("error")
+            _run_event("YouTube API 客户端构建失败", level="error")
         if not youtube:
             _log_detail("run abort: youtube client is None", level="ERROR")
             st.error("API 初始化失败，请检查 API Key 是否有效。")
             st.stop()
 
-        results = []
-        progress_bar = st.progress(0)
+        progress_bar = st.progress(0.0)
         status_text = st.empty()
-        brand_rules = load_selected_brand_rules(brands_list)
-
-        # 处理时间格式 (RFC 3339)
-        published_after_str = build_published_after(start_date)
-
-        _log_detail(f"run published_after_str={published_after_str!r}")
-        _summary_event(f"发布时间下限 | {published_after_str or 'off'}")
-
+        if brand_rules_payload is not None:
+            brand_rules = build_rules_from_payload(brand_rules_payload)
+            _log_detail(f"brand rules source: payload entries={len(brand_rules_payload)}")
+        else:
+            brand_rules = load_selected_brand_rules(brands_list)
+            _log_detail(f"brand rules source: brands.json fallback entries={len(brands_list)}")
         total_kols = len(kol_list)
+        start_index = int(state.get("next_kol_index", 0))
+        existing_results = state.get("results", [])
+        if existing_results:
+            _run_append_results([])
 
-        for i, kol in enumerate(kol_list):
+        for i in range(start_index, total_kols):
+            kol = kol_list[i]
             _log_detail(f"kol loop ({i + 1}/{total_kols}) kol={kol!r}")
-            _summary_current(i + 1, kol, "resolve_channel")
-            status_text.text(f"⏳ 正在处理 ({i+1}/{total_kols}): {kol} ... (解析 Channel ID)")
+            _run_current(i + 1, kol, "解析频道")
+            _run_set_kol(i, status="running", message="正在解析频道")
+            status_text.text(f"正在处理 ({i+1}/{total_kols}): {kol}（解析 Channel ID）")
 
             try:
                 kol_result = search_channel_brand_mentions(
@@ -491,68 +607,78 @@ if st.button("🚀 开始提取", type="primary"):
                     match_tags=match_tags,
                     log_detail=_log_detail,
                     log_json=_log_detail_json,
-                    page_progress=lambda page_number, total_items, has_next, _i=i, _kol=kol, _total=total_kols: _summary_pagination(
+                    page_progress=lambda page_number, total_items, has_next, _i=i, _kol=kol: _run_stage_pagination(
                         _i + 1,
-                        _total,
                         _kol,
                         page_number,
                         total_items,
                         has_next,
                     ),
                 )
+                state["next_kol_index"] = i + 1
+
                 if not kol_result.channel_id:
-                    _summary_add_stats(processed_kols=1, skipped_kols=1)
-                    _summary_event(f"[{i + 1}/{total_kols}] {kol} | skipped | channel not found", level="warn")
+                    _run_add_stats(processed_kols=1, skipped_kols=1)
+                    _run_set_kol(i, status="skipped", message="未找到频道", candidate_count=0, matched_count=0)
+                    _run_event(f"[{i + 1}/{total_kols}] {kol} | 已跳过：未找到频道", level="warn")
                     _log_detail(f"kol skip: no channel_id for kol={kol!r}", level="WARN")
                     st.warning(f"⚠️ 无法找到 {kol} 的 Channel ID，已跳过。")
                     progress_bar.progress((i + 1) / total_kols)
                     continue
 
-                _summary_current(i + 1, kol, "search_videos")
-                status_text.text(f"⏳ 正在处理 ({i+1}/{total_kols}): {kol} ... (搜索视频)")
-                _summary_add_stats(
+                _run_current(i + 1, kol, "分析视频")
+                status_text.text(f"正在处理 ({i+1}/{total_kols}): {kol}（分析视频）")
+                added_rows = _run_append_results(kol_result.rows)
+                _run_add_stats(
                     processed_kols=1,
                     resolved_kols=1,
                     candidate_videos=kol_result.candidate_count,
-                    matched_rows=kol_result.matched_count,
+                    matched_rows=added_rows,
+                )
+                _run_set_kol(
+                    i,
+                    status="success",
+                    message=f"候选 {kol_result.candidate_count}，匹配 {added_rows}",
+                    candidate_count=kol_result.candidate_count,
+                    matched_count=added_rows,
                 )
 
                 if not kol_result.candidate_count:
-                    _summary_event(f"[{i + 1}/{total_kols}] {kol} | ok | candidates 0 | matched 0")
+                    _run_event(f"[{i + 1}/{total_kols}] {kol} | 完成：未找到候选视频")
                     st.info(f"ℹ️ {kol} 频道下未找到包含 '{search_query}' 的视频。")
                 else:
-                    _summary_event(
-                        f"[{i + 1}/{total_kols}] {kol} | ok | candidates {kol_result.candidate_count} | matched {kol_result.matched_count}"
+                    _run_event(
+                        f"[{i + 1}/{total_kols}] {kol} | 完成：候选 {kol_result.candidate_count}，匹配 {added_rows}"
                     )
-
-                results.extend(kol_result.rows)
 
             except Exception as e:
                 error_msg = str(e)
-                _summary_add_stats(processed_kols=1, error_kols=1)
-                _summary_event(f"[{i + 1}/{total_kols}] {kol} | error | {error_msg[:120]}", level="error")
+                _run_add_stats(processed_kols=1, error_kols=1)
+                _run_set_kol(i, status="error", message=error_msg[:120])
                 _log_detail(f"kol loop exception kol={kol!r} err={error_msg!r}", exc_info=True, level="ERROR")
                 if "quotaExceeded" in error_msg:
-                    st.error(f"❌ 严重错误: YouTube API 配额已耗尽！\n本次任务被迫终止于 {kol}。请明天再试或更换 API Key。")
+                    _run_mark_paused(f"[{i + 1}/{total_kols}] {kol} | 配额耗尽，任务已暂停，可稍后继续")
+                    status_text.error("YouTube API 配额已耗尽，已保留当前进度。")
+                    st.error(f"❌ 严重错误: YouTube API 配额已耗尽！\n本次任务已暂停在 {kol}，稍后可点击“继续上次任务”。")
                     break
-                else:
-                    st.error(f"❌ 处理 {kol} 时发生未知错误: {e}")
+                _run_event(f"[{i + 1}/{total_kols}] {kol} | 失败：{error_msg[:120]}", level="error")
+                st.error(f"❌ 处理 {kol} 时发生错误: {e}")
 
-            # 更新进度条
             progress_bar.progress((i + 1) / total_kols)
 
-        _log_detail(f"run finished: results_count={len(results)}")
-        _summary_current(0, "-", "completed")
-        stats = _summary_state()["stats"]
-        _summary_event(
-            f"done | kols {stats['processed_kols']}/{stats['total_kols']} | resolved {stats['resolved_kols']} | "
-            f"skipped {stats['skipped_kols']} | errors {stats['error_kols']} | "
-            f"candidates {stats['candidate_videos']} | matched {stats['matched_rows']}"
-        )
-        status_text.success("✅ 所有 KOL 抓取完毕！")
+        final_state = _run_state()
+        if final_state.get("status") == "running":
+            _set_run_status("completed")
+            _run_current(0, "-", "已完成")
+            stats = final_state["stats"]
+            _run_event(
+                f"任务完成 | KOL {stats['processed_kols']}/{stats['total_kols']} | 已解析 {stats['resolved_kols']} | "
+                f"已跳过 {stats['skipped_kols']} | 失败 {stats['error_kols']} | 候选 {stats['candidate_videos']} | 匹配 {stats['matched_rows']}"
+            )
+            status_text.success("✅ 所有 KOL 抓取完毕！")
 
-        # 写入会话，避免点击侧边栏等控件触发重跑后「5. 提取结果」消失
-        st.session_state["last_extract_results"] = results
+        results = _run_state().get("results", [])
+        _log_detail(f"run finished: results_count={len(results)} status={_run_state().get('status')}")
         if results:
             _log_detail(f"results ui: dataframe shape={pd.DataFrame(results).shape}")
             df_tmp = pd.DataFrame(results)

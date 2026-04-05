@@ -120,7 +120,7 @@ def resolve_channel_id(
 
 def extract_brands(
     text: str,
-    brands: list[str] | list[BrandRule],
+    brands: list[BrandRule],
     log_detail: LogFn | None = None,
 ) -> list[str]:
     if not text:
@@ -138,7 +138,7 @@ def explain_brand_matches_for_video(
     title: str,
     description: str,
     tags: list[str] | None,
-    brands: list[str] | list[BrandRule],
+    brands: list[BrandRule],
     match_title: bool = True,
     match_description: bool = True,
     match_tags: bool = True,
@@ -165,7 +165,7 @@ def search_channel_brand_mentions(
     youtube,
     kol: str,
     search_query: str,
-    brands: list[str] | list[BrandRule],
+    brands: list[BrandRule],
     published_after: str | None,
     enable_full_search: bool = False,
     enable_deep_search: bool = False,
@@ -443,12 +443,12 @@ def _log_json(log_json_fn: LogJsonFn | None, label: str, payload: Any) -> None:
         log_json_fn(label, payload)
 
 
-def _ensure_brand_rules(brands: list[str] | list[BrandRule]) -> list[BrandRule]:
+def _ensure_brand_rules(brands: list[BrandRule]) -> list[BrandRule]:
     if not brands:
         return []
-    if isinstance(brands[0], BrandRule):
-        return list(brands)
-    return load_selected_brand_rules(brands)  # type: ignore[arg-type]
+    if not isinstance(brands[0], BrandRule):
+        raise TypeError("brands must be preloaded BrandRule objects")
+    return list(brands)
 
 
 def _dedupe_match_details(details: list[BrandMatchDetail]) -> list[BrandMatchDetail]:

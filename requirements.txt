@@ -1,3 +1,4 @@
 streamlit
+streamlit-ace
 google-api-python-client
 pandas

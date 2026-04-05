@@ -1,6 +1,7 @@
 import datetime
 import unittest
 
+from brand_rules import BrandRule
 from extractor_core import build_published_after, extract_brands, resolve_channel_id
 
 
@@ -51,11 +52,14 @@ class ExtractorCoreTests(unittest.TestCase):
         self.assertIsNone(build_published_after(None))
 
     def test_extract_brands_is_case_insensitive(self):
-        matched = extract_brands("Shot on SONY and Logitech gear", ["Sony", "Logitech"])
+        matched = extract_brands(
+            "Shot on SONY and Logitech gear",
+            [BrandRule(name="Sony", aliases=["Sony"]), BrandRule(name="Logitech", aliases=["Logitech"])],
+        )
         self.assertCountEqual(matched, ["Sony", "Logitech"])
 
     def test_extract_brands_respects_word_boundaries(self):
-        matched = extract_brands("Credit cards are unrelated here", ["Red"])
+        matched = extract_brands("Credit cards are unrelated here", [BrandRule(name="Red", aliases=["Red"])])
         self.assertEqual(matched, [])
 
     def test_resolve_channel_id_returns_literal_channel_id(self):

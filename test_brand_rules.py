@@ -3,7 +3,14 @@ import unittest
 from pathlib import Path
 
 from extractor_core import _build_result_row, explain_brand_matches_for_video, extract_brands, load_selected_brand_rules
-from brand_rules import evaluate_brand_matches
+from brand_rules import (
+    BrandRule,
+    build_brand_rules_payload,
+    build_rules_from_payload,
+    evaluate_brand_matches,
+    normalize_brand_rules_payload,
+    parse_brand_rules_json,
+)
 
 
 class BrandRuleTests(unittest.TestCase):
@@ -55,7 +62,7 @@ class BrandRuleTests(unittest.TestCase):
             if rules_path.exists():
                 rules_path.unlink()
 
-        details = explain_brand_matches_for_video("Surface Laptop review", "No mention here", rules)
+        details = explain_brand_matches_for_video("Surface Laptop review", "No mention here", None, rules)
         self.assertEqual(len(details), 1)
         self.assertEqual(details[0].name, "Microsoft")
         self.assertEqual(details[0].alias, "Surface")
@@ -111,8 +118,49 @@ class BrandRuleTests(unittest.TestCase):
         self.assertIsNotNone(row)
         assert row is not None
         self.assertEqual(row["提及的品牌"], "Sony")
-        self.assertIn("Sony <- Sony (title)", row["匹配详情"])
-        self.assertIn("Sony <- Sony (description)", row["匹配详情"])
+        self.assertIn("Sony：命中标题（Sony）", row["匹配详情"])
+        self.assertIn("Sony：命中描述（Sony）", row["匹配详情"])
+
+    def test_build_brand_rules_payload_initializes_empty_aliases_and_exclude(self):
+        payload = build_brand_rules_payload(["Sony", " Canon ", ""])
+        self.assertEqual(
+            payload,
+            [
+                {"name": "Sony", "aliases": [], "exclude": []},
+                {"name": "Canon", "aliases": [], "exclude": []},
+            ],
+        )
+
+    def test_parse_brand_rules_json_normalizes_whitespace(self):
+        payload = parse_brand_rules_json(
+            json.dumps(
+                [
+                    {
+                        "name": " Sony ",
+                        "aliases": [" Sony Camera ", ""],
+                        "exclude": [" reddit "],
+                    }
+                ]
+            )
+        )
+        self.assertEqual(
+            payload,
+            [{"name": "Sony", "aliases": ["Sony Camera"], "exclude": ["reddit"]}],
+        )
+
+    def test_parse_brand_rules_json_rejects_invalid_top_level(self):
+        with self.assertRaisesRegex(ValueError, "JSON 数组"):
+            parse_brand_rules_json('{"name": "Sony"}')
+
+    def test_normalize_brand_rules_payload_rejects_non_boolean_case_sensitive(self):
+        with self.assertRaisesRegex(ValueError, "case_sensitive"):
+            normalize_brand_rules_payload(
+                [{"name": "Sony", "aliases": [], "exclude": [], "case_sensitive": "yes"}]
+            )
+
+    def test_build_rules_from_payload_uses_name_when_aliases_empty(self):
+        rules = build_rules_from_payload([{"name": "Sony", "aliases": [], "exclude": []}])
+        self.assertEqual(rules, [BrandRule(name="Sony", aliases=["Sony"], exclude=[], case_sensitive=False)])
 
 
 if __name__ == "__main__":
