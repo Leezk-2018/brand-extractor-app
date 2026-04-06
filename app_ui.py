@@ -49,25 +49,59 @@ def render_sidebar(
     bool,
 ]:
     with st.sidebar:
-        st.header("1. API 配置")
-        api_key = st.text_input(
-            "YouTube Data API Key",
-            type="password",
-            help="请输入你的 Google Cloud API Key",
-        )
-
-        st.header("2. 搜索条件")
-        search_query = st.text_input(
-            "搜索关键词",
-            value="camera",
-            help="将在频道内搜索包含该关键词的视频",
-        )
-
-        st.header("3. 品牌列表")
-        st.markdown("输入要匹配的品牌名称，每行一个")
+        # 注入紧凑型 CSS
         st.markdown(
             """
             <style>
+            /* 0. 强行压缩侧边栏顶部的巨大空白 */
+            [data-testid="stSidebarUserContent"] {
+                padding-top: 1.5rem !important;
+            }
+            /* 1. 减小侧边栏整体组件间隙 */
+            [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+                gap: 0.5rem !important;
+            }
+            /* 2. 减小 container(border=True) 的内边距和内部组件间隙 */
+            [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > div:nth-child(1) {
+                padding: 0.7rem 0.6rem !important;
+                gap: 0.4rem !important;
+            }
+            /* 3. 压低 Subheader 的外边距，让它贴近下方的卡片 */
+            [data-testid="stSidebar"] h3 {
+                margin-bottom: -0.5rem !important;
+                margin-top: 0.5rem !important;
+                font-size: 1.1rem !important;
+            }
+            /* 3.1 针对第一个 Subheader 的特殊对齐 */
+            [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:first-child h3 {
+                margin-top: 0 !important;
+            }
+            /* 4. 微调 Divider(hr) 的上下边距，增加下方间距 */
+            [data-testid="stSidebar"] hr {
+                margin: 0.5rem 0 0.9rem 0 !important;
+            }
+            /* 5. 针对某些特定组件的底部间距微调 */
+            [data-testid="stSidebar"] .stCheckbox, [data-testid="stSidebar"] .stWidget {
+                margin-bottom: -0.3rem !important;
+            }
+            /* 6. 缩减侧边栏按钮高度并实现与文字对齐 */
+            [data-testid="stSidebar"] button {
+                height: 1.85rem !important;
+                min-height: 1.85rem !important;
+                padding-top: 0 !important;
+                padding-bottom: 0 !important;
+                line-height: 1.85rem !important;
+            }
+            /* 7. 让侧边栏的分列布局（如按钮+文字行）整体垂直居中 */
+            [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
+                align-items: center !important;
+            }
+            /* 8. 移除 Caption 的默认间距，交由 Flexbox 处理居中 */
+            [data-testid="stSidebar"] .stCaption {
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            /* 9. 特别处理品牌列表的 TextArea */
             div[data-testid="stSidebar"] div[data-testid="stTextArea"] {
                 margin-bottom: 0 !important;
             }
@@ -75,31 +109,55 @@ def render_sidebar(
             """,
             unsafe_allow_html=True,
         )
-        brands_input = st.text_area(
-            label="品牌列表",
-            value="Logitech\nRazer\nElgato\nSony\nCanon\nMicrosoft\nInsta360",
-            height=200,
-            label_visibility="collapsed",
-        )
-        brands_list = [brand.strip() for brand in brands_input.split("\n") if brand.strip()]
-        brand_rules_payload, brand_rules_error = _prepare_brand_rules_state(brands_list)
 
-        button_row = st.columns([1.8, 0.7])
-        with button_row[0]:
-            if st.button("高级配置"):
-                if st.session_state.get("brand_rules_applied_text") is not None:
-                    st.session_state["brand_rules_editor_text"] = st.session_state["brand_rules_applied_text"]
-                elif st.session_state.get("brand_rules_editor_text") in (None, ""):
-                    st.session_state["brand_rules_editor_text"] = _format_brand_rules_json(
-                        build_brand_rules_payload(brands_list)
-                    )
-                st.session_state["brand_rules_editor_version"] = st.session_state.get("brand_rules_editor_version", 0) + 1
-                st.session_state["brand_rules_dialog_open"] = True
+        st.subheader("🔑 核心配置")
+        with st.container(border=True):
+            api_key = st.text_input(
+                "YouTube API Key",
+                type="password",
+                help="请输入你的 Google Cloud API Key",
+            )
+            search_query = st.text_input(
+                "搜索关键词",
+                value="camera",
+                help="将在频道内搜索包含该关键词的视频",
+            )
 
-        status_text = "高级规则：有错误" if brand_rules_error else f"高级规则：{len(brand_rules_payload or [])} 条"
-        info_col, button_col = st.columns([1.8, 0.7])
-        with info_col:
-            st.caption(status_text)
+        st.subheader("🏷️ 品牌词库")
+        with st.container(border=True):
+            st.markdown(
+                """
+                <style>
+                div[data-testid="stSidebar"] div[data-testid="stTextArea"] {
+                    margin-bottom: 0.5rem !important;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            brands_input = st.text_area(
+                label="待匹配品牌（每行一个）",
+                value="Logitech\nRazer\nElgato\nSony\nCanon\nMicrosoft\nInsta360",
+                height=150,
+            )
+            brands_list = [brand.strip() for brand in brands_input.split("\n") if brand.strip()]
+            brand_rules_payload, brand_rules_error = _prepare_brand_rules_state(brands_list)
+
+            btn_col, status_col = st.columns([1, 1.2])
+            with btn_col:
+                if st.button("高级配置", use_container_width=True):
+                    if st.session_state.get("brand_rules_applied_text") is not None:
+                        st.session_state["brand_rules_editor_text"] = st.session_state["brand_rules_applied_text"]
+                    elif st.session_state.get("brand_rules_editor_text") in (None, ""):
+                        st.session_state["brand_rules_editor_text"] = _format_brand_rules_json(
+                            build_brand_rules_payload(brands_list)
+                        )
+                    st.session_state["brand_rules_editor_version"] = st.session_state.get("brand_rules_editor_version", 0) + 1
+                    st.session_state["brand_rules_dialog_open"] = True
+            
+            with status_col:
+                status_text = "⚠️ 规则有误" if brand_rules_error else f"✅ {len(brand_rules_payload or [])} 条规则"
+                st.caption(status_text)
 
         if st.session_state.get("brand_rules_dialog_open"):
             _brand_rules_dialog(brands_list)
@@ -107,37 +165,46 @@ def render_sidebar(
         if brand_rules_error:
             st.error(brand_rules_error)
 
-        with st.expander("4. 可选设置", expanded=False):
-            st.caption("发布时间")
-            use_date_filter = st.checkbox("限制发布时间", value=True)
+        st.subheader("⚙️ 扫描选项")
+        with st.container(border=True):
+            use_date_filter = st.checkbox("启用日期过滤", value=True)
             if use_date_filter:
                 start_date = st.date_input(
-                    "仅搜索此日期之后发布的视频",
+                    "起始日期",
                     value=datetime.date.today() - datetime.timedelta(days=365),
+                    label_visibility="collapsed"
                 )
             else:
                 start_date = None
 
+            st.divider()
+            
             st.caption("搜索范围")
-            enable_full_search = st.checkbox(
-                "扫描全部搜索结果",
+            enable_full_search = st.toggle(
+                "全量扫描",
                 value=True,
-                help="勾选后会自动翻页抓取全部搜索结果；未勾选时只搜索第一页。",
+                help="自动翻页抓取全部搜索结果",
             )
-            enable_deep_search = st.checkbox(
-                "补充视频详情",
+            enable_deep_search = st.toggle(
+                "深度解析",
                 value=True,
-                help="勾选后会补充视频标签、时长、分类和互动数据；未勾选时只使用搜索结果中的基础信息。",
+                help="补充视频标签、时长、分类和互动数据",
             )
 
-            st.caption("检查位置")
-            match_title = st.checkbox("检查标题", value=True)
-            match_description = st.checkbox("检查视频简介", value=True)
-            match_tags = st.checkbox("检查视频标签", value=True)
+            st.divider()
+            
+            st.caption("匹配位置")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                match_title = st.checkbox("标题", value=True)
+            with c2:
+                match_description = st.checkbox("简介", value=True)
+            with c3:
+                match_tags = st.checkbox("标签", value=True)
 
-        st.header("运行日志（高级）")
-        st.caption(f"详细日志 {log_count} 条，可查看、清空和下载。")
-        if st.button("查看日志详情", use_container_width=True, help="查看 / 清空 / 下载详细日志"):
+        st.divider()
+        st.caption(f"系统日志 ({log_count} 条)")
+        if st.button("📂 查看运行日志", use_container_width=True):
             open_log_dialog()
 
     return (
@@ -154,6 +221,7 @@ def render_sidebar(
         match_description,
         match_tags,
     )
+
 
 
 def render_main_inputs() -> list[str]:
