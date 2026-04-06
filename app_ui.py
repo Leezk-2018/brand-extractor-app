@@ -64,41 +64,33 @@ def render_sidebar(
                 height: 2.5rem !important;
                 min-height: 2.5rem !important;
             }
-            /* 保证收缩按钮依然可见但位置紧凑 */
             [data-testid="stSidebarCollapseButton"] {
                 inset-block-start: 0.5rem !important;
             }
             [data-testid="stSidebarUserContent"] {
                 padding-top: 0.5rem !important;
             }
-            /* 1. 减小侧边栏整体组件间隙 */
             [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
                 gap: 0.5rem !important;
             }
-            /* 2. 减小 container(border=True) 的内边距和内部组件间隙 */
             [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > div:nth-child(1) {
                 padding: 0.7rem 0.6rem !important;
                 gap: 0.4rem !important;
             }
-            /* 3. 压低 Subheader 的外边距，让它贴近下方的卡片 */
             [data-testid="stSidebar"] h3 {
                 margin-bottom: -0.5rem !important;
                 margin-top: 0.5rem !important;
                 font-size: 1.1rem !important;
             }
-            /* 3.1 针对第一个 Subheader 的特殊对齐 */
             [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:first-child h3 {
                 margin-top: 0 !important;
             }
-            /* 4. 微调 Divider(hr) 的上下边距，增加下方间距 */
             [data-testid="stSidebar"] hr {
                 margin: 0.5rem 0 0.9rem 0 !important;
             }
-            /* 5. 针对某些特定组件的底部间距微调 */
             [data-testid="stSidebar"] .stCheckbox, [data-testid="stSidebar"] .stWidget {
                 margin-bottom: -0.3rem !important;
             }
-            /* 6. 缩减侧边栏按钮高度并实现与文字对齐 */
             [data-testid="stSidebar"] button {
                 height: 1.85rem !important;
                 min-height: 1.85rem !important;
@@ -106,16 +98,13 @@ def render_sidebar(
                 padding-bottom: 0 !important;
                 line-height: 1.85rem !important;
             }
-            /* 7. 让侧边栏的分列布局（如按钮+文字行）整体垂直居中 */
             [data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
                 align-items: center !important;
             }
-            /* 8. 移除 Caption 的默认间距，交由 Flexbox 处理居中 */
             [data-testid="stSidebar"] .stCaption {
                 margin: 0 !important;
                 padding: 0 !important;
             }
-            /* 9. 特别处理品牌列表的 TextArea */
             div[data-testid="stSidebar"] div[data-testid="stTextArea"] {
                 margin-bottom: 0 !important;
             }
@@ -167,14 +156,11 @@ def render_sidebar(
                             build_brand_rules_payload(brands_list)
                         )
                     st.session_state["brand_rules_editor_version"] = st.session_state.get("brand_rules_editor_version", 0) + 1
-                    st.session_state["brand_rules_dialog_open"] = True
+                    st.session_state["active_dialog"] = "brand_rules"
             
             with status_col:
                 status_text = "⚠️ 规则有误" if brand_rules_error else f"✅ {len(brand_rules_payload or [])} 条规则"
                 st.caption(status_text)
-
-        if st.session_state.get("brand_rules_dialog_open"):
-            _brand_rules_dialog(brands_list)
 
         if brand_rules_error:
             st.error(brand_rules_error)
@@ -219,6 +205,13 @@ def render_sidebar(
         st.divider()
         st.caption(f"系统日志 ({log_count} 条)")
         if st.button("📂 查看运行日志", use_container_width=True):
+            st.session_state["active_dialog"] = "logs"
+
+        # --- 统一弹窗处理 ---
+        active_dialog = st.session_state.get("active_dialog")
+        if active_dialog == "brand_rules":
+            _brand_rules_dialog(brands_list)
+        elif active_dialog == "logs":
             open_log_dialog()
 
     return (
@@ -235,7 +228,6 @@ def render_sidebar(
         match_description,
         match_tags,
     )
-
 
 
 def render_main_inputs() -> list[str]:
@@ -318,7 +310,6 @@ def update_summary_panel(summary_display, summary_state: dict | None) -> None:
             st.dataframe(status_df, use_container_width=True, hide_index=True)
 
 
-
 def render_last_extract_results(rows: list[dict[str, str]] | None) -> None:
     if rows is None:
         return
@@ -391,7 +382,6 @@ def render_last_extract_results(rows: list[dict[str, str]] | None) -> None:
     )
 
 
-
 def _prepare_brand_rules_state(brands_list: list[str]) -> tuple[list[dict[str, Any]] | None, str | None]:
     auto_payload = build_brand_rules_payload(brands_list)
     auto_text = _format_brand_rules_json(auto_payload)
@@ -417,16 +407,55 @@ def _prepare_brand_rules_state(brands_list: list[str]) -> tuple[list[dict[str, A
     return st.session_state.get("brand_rules_payload"), st.session_state.get("brand_rules_error")
 
 
-
 def _render_advanced_brand_rules_editor_content(brands_list: list[str]) -> tuple[list[dict[str, Any]] | None, str | None]:
-    st.caption("默认会根据上面的品牌列表生成 brands.json 风格数据；你也可以上传 JSON 后继续编辑。")
+    # 注入弹窗专用紧凑 CSS
+    st.markdown(
+        """
+        <style>
+        /* 限制弹窗最大宽度并居中 */
+        div[role="dialog"] {
+            max-width: 850px !important;
+            margin: auto !important;
+        }
+        /* 压缩文件上传器的占用空间 */
+        [data-testid="stFileUploader"] {
+            margin-top: 0 !important;
+            margin-bottom: 0.5rem !important;
+        }
+        [data-testid="stFileUploader"] section {
+            padding: 0.2rem 1rem !important;
+            min-height: 2.5rem !important;
+        }
+        /* 紧凑标题和说明 */
+        div[role="dialog"] h3 {
+            margin-bottom: -0.2rem !important;
+        }
+        div[role="dialog"] .stCaption {
+            margin-bottom: 0.3rem !important;
+        }
+        /* 压缩状态提示框的高度 */
+        [data-testid="stNotification"] {
+            padding: 0.4rem 0.8rem !important;
+            margin-bottom: 0 !important;
+        }
+        [data-testid="stNotification"] div[role="alert"] {
+            padding: 0 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
+    st.markdown("**🔧 高级规则编辑器**")
+    st.caption("直接在下方编辑 JSON 或上传 brands.json 文件。")
+    
     uploaded_file = st.file_uploader(
-        "上传 brands.json",
+        "上传规则",
         type=["json"],
         key="brand_rules_upload_file",
-        help="上传后会先解析并回填到下方编辑区。",
+        label_visibility="collapsed"
     )
+
     if uploaded_file is not None:
         upload_signature = f"{uploaded_file.name}:{hashlib.md5(uploaded_file.getvalue()).hexdigest()}"
         if st.session_state.get("brand_rules_upload_signature") != upload_signature:
@@ -438,70 +467,79 @@ def _render_advanced_brand_rules_editor_content(brands_list: list[str]) -> tuple
                 st.session_state["brand_rules_editor_version"] = st.session_state.get("brand_rules_editor_version", 0) + 1
                 st.rerun()
             except UnicodeDecodeError:
-                st.error("上传的 JSON 文件不是 UTF-8 编码。")
-                return None, "上传的 JSON 文件不是 UTF-8 编码。"
+                st.error("文件非 UTF-8 编码。")
+                return None, "文件非 UTF-8 编码。"
             except ValueError as exc:
                 st.error(str(exc))
                 return None, str(exc)
 
     editor_text = st.session_state.get("brand_rules_editor_text", "")
     editor_version = st.session_state.get("brand_rules_editor_version", 0)
-    if st_ace is not None:
-        ace_value = st_ace(
-            value=editor_text,
-            language="json",
-            theme="tomorrow_night",
-            height=320,
-            key=f"brand_rules_editor_ace_{editor_version}",
-            wrap=True,
-            auto_update=True,
-            font_size=14,
-            show_gutter=True,
-        )
-        if ace_value is not None:
-            editor_text = ace_value
-            st.session_state["brand_rules_editor_text"] = ace_value
-    else:
-        st.caption("未安装代码编辑组件，暂时使用普通文本框。")
-        editor_text = st.text_area(
-            "规则 JSON",
-            key="brand_rules_editor_text",
-            height=320,
-            help="支持 name / aliases / exclude / case_sensitive 字段。aliases 和 exclude 默认留空。",
-        )
+    
+    with st.container(border=True):
+        if st_ace is not None:
+            ace_value = st_ace(
+                value=editor_text,
+                language="json",
+                theme="tomorrow_night",
+                height=450,
+                key=f"brand_rules_editor_ace_{editor_version}",
+                wrap=True,
+                auto_update=True,
+                font_size=14,
+                show_gutter=True,
+            )
+            if ace_value is not None:
+                editor_text = ace_value
+                st.session_state["brand_rules_editor_text"] = ace_value
+        else:
+            editor_text = st.text_area(
+                "规则 JSON",
+                key="brand_rules_editor_text",
+                height=450,
+                label_visibility="collapsed"
+            )
 
     try:
         payload = parse_brand_rules_json(editor_text)
-        st.caption(f"当前生效规则：{len(payload)} 条")
-    except ValueError as exc:
-        st.error(str(exc))
-        payload = None
-        exc_message = str(exc)
-    else:
+        is_valid = True
         exc_message = None
+    except ValueError as exc:
+        payload = None
+        is_valid = False
+        exc_message = str(exc)
 
-    left_spacer, reset_col, confirm_col, right_spacer = st.columns([2.2, 1.2, 1.2, 2.2])
-    with reset_col:
-        if st.button("重新加载", use_container_width=True):
+    # 底部操作栏：第一行状态提示（规则条数或语法错误）
+    if is_valid:
+        st.success(f"规则：{len(payload)} 条", icon="✅")
+    else:
+        st.error(f"语法有误", icon="❌")
+        if exc_message:
+            st.caption(f"原因：{exc_message}")
+
+    # 第二行：操作按钮，单独成行并靠右对齐
+    btn_spacer, btn_reset_col, btn_confirm_col = st.columns([2.5, 0.75, 0.75])
+    
+    with btn_reset_col:
+        if st.button("🔄 重置", use_container_width=True):
             st.session_state["brand_rules_editor_text"] = _format_brand_rules_json(build_brand_rules_payload(brands_list))
             st.session_state["brand_rules_upload_signature"] = None
             st.session_state["brand_rules_editor_version"] = st.session_state.get("brand_rules_editor_version", 0) + 1
             st.rerun()
-    with confirm_col:
-        if st.button("确认", type="primary", use_container_width=True):
+            
+    with btn_confirm_col:
+        if st.button("💾 保存", type="primary", disabled=not is_valid, use_container_width=True):
             st.session_state["brand_rules_payload"] = payload
             st.session_state["brand_rules_error"] = exc_message
             st.session_state["brand_rules_applied_text"] = _format_brand_rules_json(payload or [])
-            st.session_state["brand_rules_dialog_open"] = False
+            st.session_state["active_dialog"] = None
             st.rerun()
 
     return payload, exc_message
 
 
-
 def _format_brand_rules_json(payload: list[dict[str, Any]]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
-
 
 
 def _format_run_status(value: str) -> str:
@@ -514,7 +552,6 @@ def _format_run_status(value: str) -> str:
     }.get(value, value)
 
 
-
 def _format_kol_status(value: str) -> str:
     return {
         "pending": "未开始",
@@ -523,7 +560,6 @@ def _format_kol_status(value: str) -> str:
         "skipped": "已跳过",
         "error": "失败",
     }.get(value, value)
-
 
 
 def _extract_brand_options(df: pd.DataFrame) -> list[str]:
@@ -536,7 +572,6 @@ def _extract_brand_options(df: pd.DataFrame) -> list[str]:
             if brand:
                 values.add(brand)
     return sorted(values)
-
 
 
 def _apply_result_filters(
@@ -571,7 +606,6 @@ def _apply_result_filters(
     return filtered.reset_index(drop=True)
 
 
-
 def _sort_result_df(df: pd.DataFrame, sort_by: str, ascending: bool) -> pd.DataFrame:
     sortable = df.copy()
     sort_key = f"__sort_{sort_by}"
@@ -593,7 +627,6 @@ def _sort_result_df(df: pd.DataFrame, sort_by: str, ascending: bool) -> pd.DataF
     return sortable.reset_index(drop=True)
 
 
-
 def _parse_int_like(value) -> int:
     if value in ("", None):
         return -1
@@ -601,7 +634,6 @@ def _parse_int_like(value) -> int:
         return int(str(value).replace(",", "").strip())
     except Exception:
         return -1
-
 
 
 def _parse_duration_like(value) -> int:
