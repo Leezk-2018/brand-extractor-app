@@ -436,7 +436,7 @@ def _log_detail_dialog():
                 else:
                     st.code(item["entry"], language=None)
 
-st.title("YouTube 品牌提取助手")
+st.title("YouTube 品牌提取助手(beta)")
 st.markdown("批量扫描 YouTube 频道内容，找出视频中提到的品牌，并导出结果。")
 
 api_key, search_query, use_date_filter, start_date, brands_list, brand_rules_payload, brand_rules_error, enable_full_search, enable_deep_search, match_title, match_description, match_tags = render_sidebar(

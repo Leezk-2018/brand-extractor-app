@@ -64,7 +64,7 @@ def render_sidebar(
         )
 
         st.header("3. 品牌列表")
-        st.markdown("输入要启用的品牌名称，每行一个；具体别名和排除词来自 brands.json")
+        st.markdown("输入要匹配的品牌名称，每行一个")
         st.markdown(
             """
             <style>
