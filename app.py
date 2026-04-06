@@ -468,7 +468,7 @@ st.markdown(
     <h1 style='display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0;'>
         YouTube 品牌提取助手
         <span style='
-            background-color: #FF4B2B;
+            background: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%);
             color: white;
             font-size: 1.05rem;
             padding: 0.3rem 0.8rem;
@@ -478,6 +478,7 @@ st.markdown(
             letter-spacing: 0.8px;
             height: fit-content;
             margin-top: 0.3rem;
+            box-shadow: 0 4px 15px rgba(0, 114, 255, 0.35);
         '>BETA</span>
     </h1>
     """,
