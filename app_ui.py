@@ -239,23 +239,25 @@ def render_sidebar(
 
 
 def render_main_inputs() -> list[str]:
-    st.header("5. KOL 列表")
-    kols_input = st.text_area(
-        label="输入 KOL：Channel Handle（可带或不带 @）或 UC 开头的 Channel ID，每行一个",
-        value="@rogerseng\n@JordanHetrick",
-        height=150,
-    )
+    st.subheader("👥 KOL 列表")
+    with st.container(border=True):
+        kols_input = st.text_area(
+            label="输入待扫描的频道：支持 Channel Handle（如 @TechSource）或 UC 开头的 Channel ID，每行一个",
+            value="@rogerseng\n@JordanHetrick",
+            height=150,
+        )
     return [kol.strip() for kol in kols_input.split("\n") if kol.strip()]
 
 
 def render_quota_warning(kol_count: int) -> None:
-    st.warning(
-        f"⚠️ API 配额提醒：您输入了 {kol_count} 个 KOL。每次普通搜索消耗 100 点配额，请确认 API Key 配额充足。"
-    )
+    if kol_count > 0:
+        st.info(
+            f"💡 API 配额小贴士：当前输入了 {kol_count} 个 KOL。每次普通搜索预计消耗 100 点配额（每日免费上限 10,000 点）。"
+        )
 
 
 def render_summary_panel() -> any:
-    with st.expander("6. 运行状态", expanded=True):
+    with st.expander("📈 实时监控面板", expanded=True):
         return st.empty()
 
 
@@ -321,9 +323,9 @@ def render_last_extract_results(rows: list[dict[str, str]] | None) -> None:
     if rows is None:
         return
 
-    st.header("7. 提取结果")
+    st.subheader("📊 提取结果")
     if not rows:
-        st.info("没有找到任何符合品牌匹配条件的视频。")
+        st.info("尚未发现符合条件的品牌提及视频。")
         return
 
     df = pd.DataFrame(rows)

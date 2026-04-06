@@ -251,6 +251,33 @@ if not isinstance(st.session_state.get("current_run_state"), dict):
 st.markdown(
     """
 <style>
+/* 1. 缩减主内容区域顶部的巨大空白 */
+.block-container {
+    padding-top: 1.5rem !important;
+    padding-bottom: 2rem !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+}
+
+/* 2. 压低主标题和副标题的间距 */
+[data-testid="stHeader"] {
+    background: rgba(0,0,0,0) !important;
+}
+h1 {
+    margin-top: -1rem !important;
+    padding-top: 0 !important;
+    font-size: 2.2rem !important;
+}
+.stMarkdown p {
+    margin-bottom: 0.5rem !important;
+}
+
+/* 3. 压低 Subheader 的外边距，让它贴近下方的卡片 */
+h3 {
+    margin-bottom: 0.2rem !important;
+    margin-top: 0.8rem !important;
+}
+
 div[data-testid="stDialog"] {
   width: 100vw !important;
   max-width: 100vw !important;
@@ -436,7 +463,26 @@ def _log_detail_dialog():
                 else:
                     st.code(item["entry"], language=None)
 
-st.title("YouTube 品牌提取助手(beta)")
+st.markdown(
+    """
+    <h1 style='display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0;'>
+        YouTube 品牌提取助手
+        <span style='
+            background-color: #FF4B2B;
+            color: white;
+            font-size: 1.05rem;
+            padding: 0.3rem 0.8rem;
+            border-radius: 20px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            height: fit-content;
+            margin-top: 0.3rem;
+        '>BETA</span>
+    </h1>
+    """,
+    unsafe_allow_html=True
+)
 st.markdown("批量扫描 YouTube 频道内容，找出视频中提到的品牌，并导出结果。")
 
 api_key, search_query, use_date_filter, start_date, brands_list, brand_rules_payload, brand_rules_error, enable_full_search, enable_deep_search, match_title, match_description, match_tags = render_sidebar(
@@ -444,9 +490,6 @@ api_key, search_query, use_date_filter, start_date, brands_list, brand_rules_pay
     open_log_dialog=_log_detail_dialog,
 )
 kol_list = render_main_inputs()
-render_quota_warning(len(kol_list))
-summary_display = render_summary_panel()
-update_summary_panel(summary_display, _run_state())
 
 # --- 核心功能函数 ---
 @st.cache_resource(show_spinner=False)
@@ -454,14 +497,22 @@ def get_youtube_service(api_key):
     return build_youtube_service(api_key, logger=_LD)
 
 
-# --- 执行逻辑 ---
+# --- 按钮操作区 ---
 run_state = _run_state()
 can_resume = run_state.get("status") == "paused" and run_state.get("next_kol_index", 0) < run_state.get("stats", {}).get("total_kols", 0)
 
-start_col, resume_col = st.columns([1.2, 1.0])
-start_new_run = start_col.button("开始提取", type="primary", use_container_width=True)
-resume_run = resume_col.button("继续上次任务", disabled=not can_resume, use_container_width=True)
+btn_c1, btn_c2, btn_spacer = st.columns([1.2, 1.2, 2.5])
+start_new_run = btn_c1.button("🚀 开始提取", type="primary", use_container_width=True)
+resume_run = btn_c2.button("⏯️ 继续上次任务", disabled=not can_resume, use_container_width=True)
 
+# 提示配额
+render_quota_warning(len(kol_list))
+
+# 监控面板
+summary_display = render_summary_panel()
+update_summary_panel(summary_display, _run_state())
+
+# --- 执行逻辑 ---
 if start_new_run or resume_run:
     try:
         _LIVE_LOG_EMPTY = summary_display
