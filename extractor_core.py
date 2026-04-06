@@ -18,6 +18,7 @@ from brand_rules import (
 LogFn = Callable[[str], None]
 LogJsonFn = Callable[[str, Any], None]
 PageProgressFn = Callable[[int, int, bool], None]
+QuotaTrackerFn = Callable[[str, int, dict[str, Any]], None]
 DEFAULT_BRAND_RULES_PATH = Path(__file__).with_name("brands.json")
 CHANNEL_ID_RE_PATTERN = r"^UC[A-Za-z0-9_-]{22}$"
 CHANNEL_ID_RE = re.compile(CHANNEL_ID_RE_PATTERN)
@@ -63,6 +64,7 @@ def resolve_channel_id(
     raw: str,
     log_detail: LogFn | None = None,
     log_json: LogJsonFn | None = None,
+    quota_tracker: QuotaTrackerFn | None = None,
 ) -> str | None:
     handle = (raw or "").strip()
     if not handle:
@@ -76,6 +78,7 @@ def resolve_channel_id(
     ch_body = {"part": "id", "forHandle": slug}
     _log(log_detail, f"resolve_channel_id request channels.list: {json.dumps(ch_body, ensure_ascii=False)}")
     try:
+        _track_quota(quota_tracker, "channels.list", 1, {"handle": slug})
         ch_resp = youtube.channels().list(part="id", forHandle=slug).execute()
         _log_json(log_json, "resolve_channel_id response channels.list", ch_resp)
         ch_items = ch_resp.get("items") or []
@@ -102,6 +105,7 @@ def resolve_channel_id(
         f"resolve_channel_id request search.list: {json.dumps(channel_search_body, ensure_ascii=False)}",
     )
 
+    _track_quota(quota_tracker, "search.list.channel", 100, {"handle": handle, "query": query})
     response = youtube.search().list(
         part="snippet",
         q=query,
@@ -175,6 +179,7 @@ def search_channel_brand_mentions(
     log_detail: LogFn | None = None,
     log_json: LogJsonFn | None = None,
     page_progress: PageProgressFn | None = None,
+    quota_tracker: QuotaTrackerFn | None = None,
 ) -> KolProcessingResult:
     result = KolProcessingResult(kol=kol)
     rules = _ensure_brand_rules(brands)
@@ -183,6 +188,7 @@ def search_channel_brand_mentions(
         kol,
         log_detail=log_detail,
         log_json=log_json,
+        quota_tracker=quota_tracker,
     )
     if not result.channel_id:
         return result
@@ -203,6 +209,7 @@ def search_channel_brand_mentions(
         log_detail=log_detail,
         log_json=log_json,
         page_progress=page_progress,
+        quota_tracker=quota_tracker,
     )
     enriched_by_video_id: dict[str, dict[str, Any]] = {}
     category_map: dict[str, str] = {}
@@ -213,6 +220,7 @@ def search_channel_brand_mentions(
             items=items,
             log_detail=log_detail,
             log_json=log_json,
+            quota_tracker=quota_tracker,
         )
         category_map = _fetch_video_category_map(
             youtube,
@@ -220,6 +228,7 @@ def search_channel_brand_mentions(
             video_details=enriched_by_video_id,
             log_detail=log_detail,
             log_json=log_json,
+            quota_tracker=quota_tracker,
         )
     else:
         _log(log_detail, f"videos.list skipped kol={kol!r} enable_deep_search=False")
@@ -254,6 +263,7 @@ def _fetch_all_search_video_items(
     log_detail: LogFn | None = None,
     log_json: LogJsonFn | None = None,
     page_progress: PageProgressFn | None = None,
+    quota_tracker: QuotaTrackerFn | None = None,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     page_token: str | None = None
@@ -268,6 +278,7 @@ def _fetch_all_search_video_items(
             log_detail,
             f"video search.list request page={page_number} kol={kol!r}: {json.dumps(request_payload, ensure_ascii=False)}",
         )
+        _track_quota(quota_tracker, "search.list.video", 100, {"kol": kol, "page": page_number})
         response = youtube.search().list(**request_payload).execute()
         _log_json(log_json, f"video search.list response kol={kol!r} page={page_number}", response)
 
@@ -302,6 +313,7 @@ def _fetch_video_details_map(
     items: list[dict[str, Any]],
     log_detail: LogFn | None = None,
     log_json: LogJsonFn | None = None,
+    quota_tracker: QuotaTrackerFn | None = None,
 ) -> dict[str, dict[str, Any]]:
     video_ids = [item["id"]["videoId"] for item in items if item.get("id", {}).get("videoId")]
     if not video_ids:
@@ -321,6 +333,7 @@ def _fetch_video_details_map(
             log_detail,
             f"videos.list request batch={batch_number} kol={kol!r} ids={len(batch_ids)}",
         )
+        _track_quota(quota_tracker, "videos.list", 1, {"kol": kol, "batch": batch_number, "count": len(batch_ids)})
         response = youtube.videos().list(**request_payload).execute()
         _log_json(log_json, f"videos.list response kol={kol!r} batch={batch_number}", response)
         for detail in response.get("items", []):
@@ -339,6 +352,7 @@ def _fetch_video_category_map(
     video_details: dict[str, dict[str, Any]],
     log_detail: LogFn | None = None,
     log_json: LogJsonFn | None = None,
+    quota_tracker: QuotaTrackerFn | None = None,
 ) -> dict[str, str]:
     category_ids = sorted(
         {
@@ -358,6 +372,7 @@ def _fetch_video_category_map(
         log_detail,
         f"videoCategories.list request kol={kol!r} ids={category_ids!r}",
     )
+    _track_quota(quota_tracker, "videoCategories.list", 1, {"kol": kol, "count": len(category_ids)})
     response = youtube.videoCategories().list(**request_payload).execute()
     _log_json(log_json, f"videoCategories.list response kol={kol!r}", response)
     mapping = {
@@ -441,6 +456,11 @@ def _log(log_fn: LogFn | None, message: str) -> None:
 def _log_json(log_json_fn: LogJsonFn | None, label: str, payload: Any) -> None:
     if log_json_fn is not None:
         log_json_fn(label, payload)
+
+
+def _track_quota(quota_tracker: QuotaTrackerFn | None, api_name: str, units: int, context: dict[str, Any]) -> None:
+    if quota_tracker is not None:
+        quota_tracker(api_name, units, context)
 
 
 def _ensure_brand_rules(brands: list[BrandRule]) -> list[BrandRule]:

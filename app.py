@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import traceback
+from pathlib import Path
 
 from app_ui import (
     render_last_extract_results,
@@ -20,6 +21,7 @@ from extractor_core import (
     load_selected_brand_rules,
     search_channel_brand_mentions,
 )
+from history_store import delete_history, list_history_entries, load_history_detail, save_run_history, create_run_id
 
 _LD = logging.getLogger("lee_debug")
 if not _LD.handlers:
@@ -77,6 +79,10 @@ def _new_run_state() -> dict:
         "result_urls": [],
         "next_kol_index": 0,
         "last_error": "",
+        "run_id": "",
+        "started_at": "",
+        "finished_at": "",
+        "quota_units": 0,
     }
 
 
@@ -102,6 +108,9 @@ def _run_reset(**meta) -> None:
     state = _new_run_state()
     state["status"] = "running"
     state["meta"] = meta
+    state["run_id"] = create_run_id()
+    state["started_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    state["quota_units"] = 0
     state["stats"]["total_kols"] = meta.get("total_kols", 0)
     state["kols"] = [
         {
@@ -185,6 +194,26 @@ def _run_mark_paused(message: str) -> None:
     state["last_error"] = message
     _run_event(message, level="error")
 
+
+def _run_add_quota(api_name: str, units: int, context: dict | None = None) -> None:
+    state = _run_state()
+    state["quota_units"] = int(state.get("quota_units") or 0) + int(units)
+    _log_detail(f"quota +{units} via {api_name}: total={state['quota_units']} context={json.dumps(context or {}, ensure_ascii=False)}")
+    _refresh_summary()
+
+
+def _finalize_history_snapshot() -> None:
+    state = _run_state()
+    if not state.get("run_id"):
+        return
+    if state.get("history_saved"):
+        return
+    if not state.get("started_at"):
+        state["started_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    state["finished_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    meta = save_run_history(state, st.session_state.get("lee_debug_logs", []))
+    state["history_saved"] = True
+    st.session_state["last_saved_history_run_id"] = meta.get("run_id")
 
 
 def _log_summary(msg: str) -> None:
@@ -349,6 +378,96 @@ div[data-testid="stDialog"] [role="dialog"] [data-testid="stJson"] {
 """,
     unsafe_allow_html=True,
 )
+
+
+@st.dialog("历史记录", width="large")
+def _history_dialog():
+    entries = list_history_entries()
+    st.session_state.setdefault("history_selected_run_id", "")
+
+    st.markdown("**历史列表**")
+    if not entries:
+        st.info("暂无历史记录。")
+        return
+
+    for item in entries:
+        run_id = str(item.get("run_id", ""))
+        cols = st.columns([2.2, 1.2, 1.2, 1.0, 0.9, 0.9])
+        cols[0].markdown(
+            f"**{item.get('started_at', '-') }**  \n状态：{item.get('status', '-') } | 关键词：{item.get('search_query', '-') }"
+        )
+        cols[1].caption(f"结束：{item.get('finished_at', '-')}")
+        cols[2].caption(f"KOL：{item.get('total_kols', 0)} | 匹配：{item.get('matched_rows', 0)}")
+        cols[3].caption(f"额度：{item.get('quota_units', 0)}")
+        if cols[4].button("加载", key=f"history_load_{run_id}", use_container_width=True):
+            st.session_state["history_selected_run_id"] = run_id
+            st.session_state["active_dialog"] = "history_detail"
+            st.rerun()
+        if cols[5].button("删除", key=f"history_delete_{run_id}", use_container_width=True):
+            delete_history(run_id)
+            if st.session_state.get("history_selected_run_id") == run_id:
+                st.session_state["history_selected_run_id"] = ""
+            st.rerun()
+        st.divider()
+
+
+@st.dialog("历史详情", width="large")
+def _history_detail_dialog():
+    run_id = st.session_state.get("history_selected_run_id", "")
+    detail = load_history_detail(run_id)
+    if not detail:
+        st.warning("历史记录不存在或已被删除。")
+        return
+
+    meta = detail.get("meta") or {}
+    form_data = meta.get("form_data") or {}
+    stats = meta.get("stats") or {}
+    files = meta.get("files") or {}
+
+    st.markdown(f"**运行 ID**: `{meta.get('run_id', '-')}`")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("状态", meta.get("status", "-"))
+    c2.metric("实际额度", int(meta.get("quota_units") or 0))
+    c3.metric("KOL", int(stats.get("total_kols") or 0))
+    c4.metric("匹配结果", int(stats.get("matched_rows") or 0))
+
+    st.caption(f"开始时间：{meta.get('started_at', '-')} | 结束时间：{meta.get('finished_at', '-')}")
+
+    st.markdown("**表单数据**")
+    st.json(form_data)
+
+    st.markdown("**运行统计**")
+    st.json(stats)
+
+    csv_path = Path(__file__).resolve().parent / str(files.get("csv_file") or "")
+    log_path = Path(__file__).resolve().parent / str(files.get("log_file") or "")
+
+    if csv_path.exists():
+        st.download_button(
+            label="下载该次 CSV",
+            data=csv_path.read_bytes(),
+            file_name=csv_path.name,
+            mime="text/csv",
+            use_container_width=True,
+            key=f"download_history_csv_{meta.get('run_id', '')}",
+        )
+    else:
+        st.caption("CSV 文件不存在。")
+
+    if log_path.exists():
+        log_text = log_path.read_text(encoding="utf-8")
+        st.download_button(
+            label="下载该次日志",
+            data=log_text.encode("utf-8"),
+            file_name=log_path.name,
+            mime="text/plain",
+            use_container_width=True,
+            key=f"download_history_log_{meta.get('run_id', '')}",
+        )
+        st.markdown("**日志预览**")
+        st.code(log_text[:12000] or "", language=None)
+    else:
+        st.caption("日志文件不存在。")
 
 
 @st.dialog("运行日志控制台", width="large")
@@ -540,7 +659,9 @@ st.markdown("批量扫描 YouTube 频道内容，找出视频中提到的品牌�
 
 api_key, search_query, use_date_filter, start_date, brands_list, brand_rules_payload, brand_rules_error, enable_full_search, enable_deep_search, match_title, match_description, match_tags = render_sidebar(
     log_count=len(st.session_state.get("lee_debug_logs", [])),
+    history_count=len(list_history_entries()),
     open_log_dialog=_log_detail_dialog,
+    open_history_dialog=_history_dialog,
 )
 kol_list = render_main_inputs()
 
@@ -551,6 +672,10 @@ def get_youtube_service(api_key):
 
 
 # --- 按钮操作区 ---
+if st.session_state.get("active_dialog") == "history_detail":
+    st.session_state["active_dialog"] = None
+    _history_detail_dialog()
+
 run_state = _run_state()
 can_resume = run_state.get("status") == "paused" and run_state.get("next_kol_index", 0) < run_state.get("stats", {}).get("total_kols", 0)
 
@@ -718,6 +843,7 @@ if start_new_run or resume_run:
                         total_items,
                         has_next,
                     ),
+                    quota_tracker=_run_add_quota,
                 )
                 state["next_kol_index"] = i + 1
 
@@ -790,7 +916,10 @@ if start_new_run or resume_run:
         else:
             _log_detail("results ui: empty results list")
     finally:
-        _LIVE_LOG_EMPTY = None
+        try:
+            _finalize_history_snapshot()
+        finally:
+            _LIVE_LOG_EMPTY = None
 
 
 render_last_extract_results(st.session_state.get("last_extract_results"))

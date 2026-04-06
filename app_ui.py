@@ -33,7 +33,9 @@ def _brand_rules_dialog(brands_list: list[str]) -> None:
 
 def render_sidebar(
     log_count: int,
+    history_count: int,
     open_log_dialog: Callable[[], None],
+    open_history_dialog: Callable[[], None],
 ) -> tuple[
     str,
     str,
@@ -208,12 +210,22 @@ def render_sidebar(
             st.session_state["active_dialog"] = "logs"
             st.rerun() # 立即触发重绘以打开弹窗
 
+        st.caption(f"历史记录 ({history_count} 条)")
+        if st.button("🕘 查看历史记录", use_container_width=True):
+            st.session_state["active_dialog"] = "history"
+            st.rerun()
+
         # --- 统一弹窗处理 ---
         active_dialog = st.session_state.get("active_dialog")
         if active_dialog == "brand_rules":
+            st.session_state["active_dialog"] = None
             _brand_rules_dialog(brands_list)
         elif active_dialog == "logs":
+            st.session_state["active_dialog"] = None
             open_log_dialog()
+        elif active_dialog == "history":
+            st.session_state["active_dialog"] = None
+            open_history_dialog()
 
     return (
         api_key,
@@ -266,15 +278,17 @@ def update_summary_panel(summary_display, summary_state: dict | None) -> None:
     kol_items = summary_state.get("kols", [])
     run_status = summary_state.get("status") or "idle"
     results = summary_state.get("results", [])
+    quota_units = int(summary_state.get("quota_units") or 0)
 
     with summary_display.container():
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
         c1.metric("KOL", f'{stats.get("processed_kols", 0)}/{stats.get("total_kols", 0)}')
         c2.metric("已解析", stats.get("resolved_kols", 0))
         c3.metric("已跳过", stats.get("skipped_kols", 0))
         c4.metric("失败", stats.get("error_kols", 0))
         c5.metric("候选视频", stats.get("candidate_videos", 0))
         c6.metric("匹配结果", stats.get("matched_rows", 0))
+        c7.metric("实际额度", quota_units)
 
         st.caption(
             f"状态：{_format_run_status(run_status)} | 关键词：{meta.get('search_query', '-')} | "
