@@ -54,8 +54,22 @@ def render_sidebar(
             """
             <style>
             /* 0. 强行压缩侧边栏顶部的巨大空白 */
+            [data-testid="stSidebarHeader"] {
+                height: 2.5rem !important;
+                min-height: 2.5rem !important;
+                padding: 0 !important;
+                margin-bottom: -2rem !important;
+            }
+            [data-testid="stSidebarHeader"] > div {
+                height: 2.5rem !important;
+                min-height: 2.5rem !important;
+            }
+            /* 保证收缩按钮依然可见但位置紧凑 */
+            [data-testid="stSidebarCollapseButton"] {
+                inset-block-start: 0.5rem !important;
+            }
             [data-testid="stSidebarUserContent"] {
-                padding-top: 1.5rem !important;
+                padding-top: 0.5rem !important;
             }
             /* 1. 减小侧边栏整体组件间隙 */
             [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
