@@ -206,12 +206,17 @@ def render_sidebar(
         st.caption(f"系统日志 ({log_count} 条)")
         if st.button("📂 查看运行日志", use_container_width=True):
             st.session_state["active_dialog"] = "logs"
+            st.rerun() # 立即触发重绘以打开弹窗
 
-        # --- 统一弹窗处理 ---
+        # --- 统一弹窗处理（互斥且单次触发） ---
         active_dialog = st.session_state.get("active_dialog")
         if active_dialog == "brand_rules":
+            # 清理状态，防止下次 input 变动重复触发
+            st.session_state["active_dialog"] = None 
             _brand_rules_dialog(brands_list)
         elif active_dialog == "logs":
+            # 清理状态，防止下次 input 变动重复触发
+            st.session_state["active_dialog"] = None
             open_log_dialog()
 
     return (

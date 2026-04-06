@@ -351,117 +351,169 @@ div[data-testid="stDialog"] [role="dialog"] [data-testid="stJson"] {
 )
 
 
-@st.dialog("日志详情", width="large")
+@st.dialog("运行日志控制台", width="large")
 def _log_detail_dialog():
+    # 1. 注入终端风格 CSS
+    st.markdown(
+        """
+        <style>
+        /* 限制弹窗宽度 */
+        div[role="dialog"] {
+            max-width: 950px !important;
+            margin: auto !important;
+        }
+        /* 紧凑统计行 */
+        .log-stats-bar {
+            display: flex;
+            gap: 1.2rem;
+            padding: 0.5rem 1rem;
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            color: #334155;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+        .stat-item { display: flex; gap: 0.4rem; align-items: center; }
+        .stat-label { color: #475569; }
+        .stat-value { font-weight: 800; color: #000000; }
+        .stat-err { color: #dc2626 !important; }
+
+        /* 日志条目容器 - 极致压缩 */
+        .log-entry-row {
+            padding: 0.2rem 0.5rem !important;
+            margin-bottom: 0.15rem !important;
+            border-radius: 3px !important;
+            background: #ffffff !important;
+            border: 1px solid #e5e7eb !important;
+            display: flex;
+            align-items: center;
+            min-height: 1.8rem;
+        }
+        .log-ts { 
+            color: #374151; 
+            font-weight: 600; 
+            font-size: 1rem; 
+            font-family: 'Consolas', monospace; 
+            margin-right: 0.8rem;
+            white-space: nowrap;
+        }
+        .log-lvl { 
+            font-weight: 900; 
+            font-size: 0.8rem; 
+            padding: 0rem 0.3rem; 
+            border-radius: 2px; 
+            margin-right: 0.8rem; 
+            text-transform: uppercase;
+            line-height: 1.2;
+        }
+        .lvl-info { background: #409EFF; color: #ffffff; }
+        .lvl-warn { background: #E6A23C; color: #ffffff; }
+        .lvl-error { background: #b91c1c; color: #ffffff; }
+        
+        /* 核心日志文字 - 柔和深灰 */
+        .log-txt { 
+            color: #374151 !important; 
+            font-size: 1rem !important; 
+            font-weight: 400 !important; 
+            font-family: "PingFang SC", sans-serif;
+            word-break: break-all;
+        }
+        
+        /* 紧凑化 Streamlit 内置组件 */
+        [data-testid="stExpander"] {
+            border: none !important;
+            background: transparent !important;
+        }
+        [data-testid="stExpander"] section {
+            padding: 0 !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     logs = st.session_state.get("lee_debug_logs", [])
     parsed_logs = []
     json_count = 0
     level_counts = {"INFO": 0, "WARN": 0, "ERROR": 0}
+    
     for i, raw in enumerate(logs):
-        if isinstance(raw, dict):
-            entry = _log_entry_text(raw)
-            level = str(raw.get("level", "INFO")).upper()
-        else:
-            entry = _log_entry_text(raw)
-            level = "ERROR" if "Traceback" in entry or " err=" in entry else "INFO"
+        entry = _log_entry_text(raw)
+        level = str(raw.get("level", "INFO")).upper() if isinstance(raw, dict) else ("ERROR" if "Traceback" in entry else "INFO")
         prefix, j = _try_parse_json_suffix_in_log_entry(entry)
         is_json = j is not None
-        if is_json:
-            json_count += 1
-        if level not in level_counts:
-            level_counts[level] = 0
-        level_counts[level] += 1
-        parsed_logs.append(
-            {
-                "index": i + 1,
-                "entry": entry,
-                "prefix": prefix,
-                "json": j,
-                "is_json": is_json,
-                "level": level,
-            }
-        )
+        if is_json: json_count += 1
+        level_counts[level] = level_counts.get(level, 0) + 1
+        parsed_logs.append({
+            "index": i + 1, "entry": entry, "prefix": prefix, "json": j,
+            "is_json": is_json, "level": level
+        })
 
-    st.markdown("### 日志控制台")
-    st.caption("保留完整调试日志。支持筛选、倒序查看、结构化 JSON 浏览和下载。")
+    # 2. 统计行 (Markdown HTML)
+    st.markdown(
+        f"""
+        <div class="log-stats-bar">
+            <div class="stat-item"><span class="stat-label">Total:</span><span class="stat-value">{len(parsed_logs)}</span></div>
+            <div class="stat-item"><span class="stat-label">JSON:</span><span class="stat-value">{json_count}</span></div>
+            <div class="stat-item"><span class="stat-label">Text:</span><span class="stat-value">{len(parsed_logs) - json_count}</span></div>
+            <div class="stat-item"><span class="stat-label">Errors:</span><span class="stat-value stat-err">{level_counts.get("ERROR", 0)}</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("总条目", len(parsed_logs))
-    m2.metric("JSON", json_count)
-    m3.metric("文本", len(parsed_logs) - json_count)
-    m4.metric("ERROR", level_counts.get("ERROR", 0))
+    # 3. 筛选器行
+    f1, f2, f3, f4 = st.columns([2.5, 1, 1, 0.8])
+    keyword = f1.text_input("搜索", placeholder="过滤日志...", label_visibility="collapsed")
+    view_mode = f2.selectbox("展示", ["全部", "JSON", "文本"], label_visibility="collapsed")
+    level_mode = f3.selectbox("等级", ["全部", "INFO", "WARN", "ERROR"], label_visibility="collapsed")
+    newest_first = f4.toggle("最新", value=True)
 
-    t1, t2, t3, t4 = st.columns([2.8, 1.1, 1.1, 0.9])
-    with t1:
-        keyword = st.text_input(
-            "筛选",
-            placeholder="搜索关键字、KOL、video id、error",
-            label_visibility="collapsed",
-        )
-    with t2:
-        view_mode = st.selectbox(
-            "类型",
-            ["全部", "JSON", "文本"],
-            label_visibility="collapsed",
-        )
-    with t3:
-        level_mode = st.selectbox(
-            "等级",
-            ["全部", "INFO", "WARN", "ERROR"],
-            label_visibility="collapsed",
-        )
-    with t4:
-        newest_first = st.toggle("最新在前", value=True)
-
-    a1, a2 = st.columns(2)
+    # 4. 操作行
+    a1, a2, a3 = st.columns([1, 1, 3])
     with a1:
-        if st.button("清空日志", use_container_width=True):
+        if st.button("🗑️ 清空", use_container_width=True):
             st.session_state["lee_debug_logs"] = []
             st.rerun()
     with a2:
-        payload = ("\n".join(_log_entry_text(item) for item in logs) if logs else "（尚无日志）").encode("utf-8")
-        st.download_button(
-            label="下载 TXT",
-            data=payload,
-            file_name="lee-debug.log",
-            mime="text/plain; charset=utf-8",
-            use_container_width=True,
-        )
+        payload = ("\n".join(_log_entry_text(item) for item in logs) if logs else "").encode("utf-8")
+        st.download_button("💾 下载", data=payload, file_name="debug.log", mime="text/plain", use_container_width=True)
 
+    # 5. 日志列表渲染
     filtered_logs = parsed_logs
-    if view_mode == "JSON":
-        filtered_logs = [item for item in filtered_logs if item["is_json"]]
-    elif view_mode == "文本":
-        filtered_logs = [item for item in filtered_logs if not item["is_json"]]
-
-    if level_mode != "全部":
-        filtered_logs = [item for item in filtered_logs if item["level"] == level_mode]
-
+    if view_mode == "JSON": filtered_logs = [it for it in filtered_logs if it["is_json"]]
+    elif view_mode == "文本": filtered_logs = [it for it in filtered_logs if not it["is_json"]]
+    if level_mode != "全部": filtered_logs = [it for it in filtered_logs if it["level"] == level_mode]
     if keyword.strip():
         needle = keyword.strip().lower()
-        filtered_logs = [item for item in filtered_logs if needle in item["entry"].lower()]
+        filtered_logs = [it for it in filtered_logs if needle in it["entry"].lower()]
 
-    if newest_first:
-        filtered_logs = list(reversed(filtered_logs))
+    if newest_first: filtered_logs = list(reversed(filtered_logs))
 
-    st.caption(f"显示 {len(filtered_logs)} / {len(parsed_logs)} 条")
+    st.divider()
+    
+    for item in filtered_logs:
+        lvl_class = f"lvl-{item['level'].lower()}"
+        ts = item['entry'][:19] if len(item['entry']) >= 19 else ""
+        raw_content = item['entry'][20:] if len(item['entry']) > 20 else item['entry']
+        
+        display_content = raw_content
 
-    if not filtered_logs:
-        st.info("没有匹配当前筛选条件的日志。")
-    else:
-        for item in filtered_logs:
-            with st.container(border=True):
-                if item["is_json"]:
-                    st.caption(f"#{item['index']} · {item['level']} · JSON")
-                    if item["prefix"]:
-                        st.markdown(f"**{item['prefix']}**")
-                else:
-                    st.caption(f"#{item['index']} · {item['level']} · TEXT")
-
-                if item["is_json"]:
+        with st.container():
+            st.markdown(
+                f"""
+                <div class="log-entry-row">
+                    <span class="log-ts">{ts}</span>
+                    <span class="log-lvl {lvl_class}">{item['level']}</span>
+                    <span class="log-txt">{item['prefix'] if item['is_json'] else display_content}</span>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            if item["is_json"]:
+                with st.expander("查看 JSON 数据", expanded=False):
                     st.json(item["json"], expanded=1)
-                else:
-                    st.code(item["entry"], language=None)
 
 st.markdown(
     """
