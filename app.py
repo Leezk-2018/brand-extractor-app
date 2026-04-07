@@ -13,6 +13,7 @@ from app_ui import (
     render_sidebar,
     render_summary_panel,
     update_summary_panel,
+    _format_run_status,
 )
 from brand_rules import build_rules_from_payload
 from extractor_core import (
@@ -386,16 +387,37 @@ def _history_dialog():
         """
         <style>
         .history-list-container {
-            max-height: 65vh;
+            max-height: 70vh;
             overflow-y: auto;
-            padding-right: 0.5rem;
+            padding-right: 0.6rem;
+        }
+        .history-card {
+            padding: 0.6rem 0.8rem;
+            border-radius: 8px;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            margin-bottom: 0.5rem;
+            transition: all 0.2s;
+            cursor: pointer;
+            position: relative;
+        }
+        .history-card:hover {
+            border-color: #0072ff;
+            background: rgba(0, 114, 255, 0.02);
+        }
+        .history-card-selected {
+            border-left: 5px solid #0072ff !important;
+            background: rgba(0, 114, 255, 0.05) !important;
+            border-color: rgba(0, 114, 255, 0.2);
         }
         .history-detail-container {
-            max-height: 65vh;
+            max-height: 70vh;
             overflow-y: auto;
-            padding-left: 0.5rem;
-            padding-right: 0.5rem;
-            border-left: 1px solid rgba(15, 23, 42, 0.1);
+            padding-left: 1rem;
+            border-left: 1px solid rgba(15, 23, 42, 0.08);
+        }
+        /* 紧凑 Metric 样式 */
+        [data-testid="stMetricValue"] {
+            font-size: 1.6rem !important;
         }
         </style>
         """,
@@ -409,7 +431,11 @@ def _history_dialog():
         st.info("暂无历史记录。")
         return
 
-    list_col, detail_col = st.columns([1, 1.6])
+    # 默认选中第一条
+    if not st.session_state["history_selected_run_id"] and entries:
+        st.session_state["history_selected_run_id"] = str(entries[0].get("run_id", ""))
+
+    list_col, detail_col = st.columns([1, 2.2])
 
     with list_col:
         st.markdown('<div class="history-list-container">', unsafe_allow_html=True)
@@ -417,16 +443,31 @@ def _history_dialog():
             run_id = str(item.get("run_id", ""))
             is_selected = run_id == st.session_state.get("history_selected_run_id")
             
-            # 使用 container(border=True) 达到卡片效果
-            with st.container(border=True):
-                st.markdown(f"**{item.get('started_at', '-')}**")
-                st.caption(f"状态：{item.get('status', '-')} | 关键词：{item.get('search_query', '-')}")
-                c1, c2 = st.columns(2)
-                if c1.button("查看", key=f"history_load_{run_id}", use_container_width=True, type="primary" if is_selected else "secondary"):
+            status = item.get("status", "idle")
+            status_icon = "✅" if status == "completed" else "⏳" if status == "running" else "⏸️" if status == "paused" else "❌"
+            
+            card_class = "history-card history-card-selected" if is_selected else "history-card"
+            
+            # 使用 Streamlit 容器模拟卡片
+            with st.container():
+                st.markdown(
+                    f"""
+                    <div class="{card_class}">
+                        <div style="font-weight:600; font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; line-height:1.4;">
+                            {status_icon} {item.get('started_at', '-')[5:16]} | 👥 {item.get('total_kols', 0)} | 🔍 {item.get('search_query', '-')}
+                        </div>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+                
+                # 透明层上覆盖实际按钮
+                c1, c2 = st.columns([4, 1])
+                if c1.button("查看", key=f"view_{run_id}", use_container_width=True, type="primary" if is_selected else "secondary"):
                     st.session_state["history_selected_run_id"] = run_id
                     st.session_state["active_dialog"] = "history"
                     st.rerun()
-                if c2.button("删除", key=f"history_delete_{run_id}", use_container_width=True):
+                if c2.button("🗑️", key=f"del_{run_id}", use_container_width=True, help="删除此记录"):
                     delete_history(run_id)
                     if st.session_state.get("history_selected_run_id") == run_id:
                         st.session_state["history_selected_run_id"] = ""
@@ -449,50 +490,65 @@ def _history_dialog():
                 stats = meta.get("stats") or {}
                 files = meta.get("files") or {}
 
-                st.markdown(f"**运行 ID**: `{meta.get('run_id', '-')}`")
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("状态", meta.get("status", "-"))
-                m2.metric("实际额度", int(meta.get("quota_units") or 0))
-                m3.metric("KOL", int(stats.get("total_kols") or 0))
-                m4.metric("匹配结果", int(stats.get("matched_rows") or 0))
+                st.markdown(f"### 任务详情 `{meta.get('run_id', '-')[:15]}...`")
+                
+                tab_obs, tab_cfg, tab_log = st.tabs(["📊 结果概览", "⚙️ 原始配置", "📄 运行日志"])
+                
+                with tab_obs:
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("状态", _format_run_status(meta.get("status", "-")))
+                    m2.metric("额度消耗", int(meta.get("quota_units") or 0))
+                    m3.metric("KOL 总数", int(stats.get("total_kols") or 0))
+                    m4.metric("匹配结果", int(stats.get("matched_rows") or 0))
+                    
+                    st.divider()
+                    
+                    col_info, col_dl = st.columns([2, 1])
+                    with col_info:
+                        st.markdown(f"**搜索关键词**: `{form_data.get('search_query', '-')}`")
+                        st.markdown(f"**品牌数量**: `{len(form_data.get('brands_list', []))}`")
+                        st.caption(f"开始：{meta.get('started_at', '-')} | 结束：{meta.get('finished_at', '-')}")
+                    
+                    with col_dl:
+                        csv_path = Path(__file__).resolve().parent / str(files.get("csv_file") or "")
+                        if csv_path.exists():
+                            st.download_button(
+                                label="💾 下载结果 (CSV)",
+                                data=csv_path.read_bytes(),
+                                file_name=csv_path.name,
+                                mime="text/csv",
+                                use_container_width=True,
+                                type="primary",
+                                key=f"dl_csv_{selected_run_id}",
+                            )
+                        else:
+                            st.error("CSV 文件已丢失")
 
-                st.caption(f"开始时间：{meta.get('started_at', '-')} | 结束时间：{meta.get('finished_at', '-')}")
+                with tab_cfg:
+                    st.markdown("**表单提交数据**")
+                    st.json(form_data, expanded=False)
+                    st.markdown("**详细运行统计**")
+                    st.json(stats, expanded=True)
 
-                st.markdown("**表单数据**")
-                st.json(form_data)
-
-                st.markdown("**运行统计**")
-                st.json(stats)
-
-                csv_path = Path(__file__).resolve().parent / str(files.get("csv_file") or "")
-                log_path = Path(__file__).resolve().parent / str(files.get("log_file") or "")
-
-                if csv_path.exists():
-                    st.download_button(
-                        label="下载该次 CSV",
-                        data=csv_path.read_bytes(),
-                        file_name=csv_path.name,
-                        mime="text/csv",
-                        use_container_width=True,
-                        key=f"download_history_csv_{meta.get('run_id', '')}",
-                    )
-                else:
-                    st.caption("CSV 文件不存在。")
-
-                if log_path.exists():
-                    log_text = log_path.read_text(encoding="utf-8")
-                    st.download_button(
-                        label="下载该次日志",
-                        data=log_text.encode("utf-8"),
-                        file_name=log_path.name,
-                        mime="text/plain",
-                        use_container_width=True,
-                        key=f"download_history_log_{meta.get('run_id', '')}",
-                    )
-                    st.markdown("**日志预览**")
-                    st.code(log_text[:12000] or "", language=None)
-                else:
-                    st.caption("日志文件不存在。")
+                with tab_log:
+                    log_path = Path(__file__).resolve().parent / str(files.get("log_file") or "")
+                    if log_path.exists():
+                        log_text = log_path.read_text(encoding="utf-8")
+                        st.download_button(
+                            label="💾 下载完整日志",
+                            data=log_text.encode("utf-8"),
+                            file_name=log_path.name,
+                            mime="text/plain",
+                            use_container_width=True,
+                            key=f"dl_log_{selected_run_id}",
+                        )
+                        st.markdown("**最近日志预览 (100行)**")
+                        # 仅展示最后一部分日志，避免撑破页面
+                        log_lines = log_text.splitlines()
+                        preview_text = "\n".join(log_lines[-100:]) if len(log_lines) > 100 else log_text
+                        st.code(preview_text, language=None)
+                    else:
+                        st.caption("日志文件不存在。")
         st.markdown('</div>', unsafe_allow_html=True)
 
 
