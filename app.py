@@ -18,7 +18,7 @@ from app_ui import (
 from brand_rules import build_rules_from_payload
 from extractor_core import (
     build_published_after,
-    get_youtube_service as build_youtube_service,
+    YouTubeManager,
     load_selected_brand_rules,
     search_channel_brand_mentions,
 )
@@ -862,11 +862,12 @@ if start_new_run or resume_run:
         )
         _log_detail(f"run published_after_str={published_after_str!r}")
 
+        api_key_list = [k.strip() for k in api_key.split('\n') if k.strip()]
         _log_detail(
-            f"get_youtube_service request: build(youtube, v3) api_key={_mask_api_key(api_key)}"
+            f"get_youtube_service request: YouTubeManager api_keys_count={len(api_key_list)}"
         )
-        youtube = get_youtube_service(api_key)
-        if youtube:
+        youtube = YouTubeManager(api_keys=api_key_list, logger=_LD)
+        if youtube._current_service:
             _log_detail("get_youtube_service response: client built ok")
             _run_event("YouTube API 客户端就绪")
         else:
@@ -876,7 +877,7 @@ if start_new_run or resume_run:
             )
             _set_run_status("error")
             _run_event("YouTube API 客户端构建失败", level="error")
-        if not youtube:
+        if not youtube._current_service:
             _log_detail("run abort: youtube client is None", level="ERROR")
             st.error("API 初始化失败，请检查 API Key 是否有效。")
             st.stop()
@@ -966,10 +967,10 @@ if start_new_run or resume_run:
                 _run_add_stats(processed_kols=1, error_kols=1)
                 _run_set_kol(i, status="error", message=error_msg[:120])
                 _log_detail(f"kol loop exception kol={kol!r} err={error_msg!r}", exc_info=True, level="ERROR")
-                if "quotaExceeded" in error_msg:
-                    _run_mark_paused(f"[{i + 1}/{total_kols}] {kol} | 配额耗尽，任务已暂停，可稍后继续")
-                    status_text.error("YouTube API 配额已耗尽，已保留当前进度。")
-                    st.error(f"❌ 严重错误: YouTube API 配额已耗尽！\n本次任务已暂停在 {kol}，稍后可点击“继续上次任务”。")
+                if "All API keys quotaExceeded" in error_msg or "quotaExceeded" in error_msg:
+                    _run_mark_paused(f"[{i + 1}/{total_kols}] {kol} | 所有配额耗尽，任务已暂停，可稍后继续")
+                    status_text.error("YouTube API 所有配额已耗尽，已保留当前进度。")
+                    st.error(f"❌ 严重错误: YouTube API 所有配额已耗尽！\n本次任务已暂停在 {kol}，稍后可点击“继续上次任务”。")
                     break
                 _run_event(f"[{i + 1}/{total_kols}] {kol} | 失败：{error_msg[:120]}", level="error")
                 st.error(f"❌ 处理 {kol} 时发生错误: {e}")

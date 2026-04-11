@@ -40,6 +40,9 @@ class FakeYoutube:
     def search(self):
         return FakeSearchResource(self._search_response)
 
+    def execute(self, build_request_fn):
+        return build_request_fn(self).execute()
+
 
 class ExtractorCoreTests(unittest.TestCase):
     def test_build_published_after_formats_date(self):

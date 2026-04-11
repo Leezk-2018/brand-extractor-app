@@ -45,6 +45,82 @@ def get_youtube_service(api_key: str, logger: logging.Logger | None = None):
         return None
 
 
+class YouTubeManager:
+    def __init__(self, api_keys: list[str], logger: logging.Logger | None = None):
+        self.api_keys = [k.strip() for k in api_keys if k.strip()]
+        self.current_index = 0
+        self.logger = logger
+        self._current_service = None
+        self._find_next_valid_service()
+        
+    def _build(self, index: int):
+        if not self.api_keys or index >= len(self.api_keys):
+            return None
+        return get_youtube_service(self.api_keys[index], self.logger)
+
+    def _find_next_valid_service(self):
+        """寻找下一个能够成功初始化的服务对象"""
+        while self.current_index < len(self.api_keys):
+            service = self._build(self.current_index)
+            if service:
+                self._current_service = service
+                return
+            
+            if self.logger:
+                self.logger.info(f"lee-debug API key #{self.current_index + 1} initialization failed, skipping...")
+            self.current_index += 1
+        
+        self._current_service = None
+
+    def execute(self, build_request_fn: Callable[[Any], Any]) -> Any:
+        while True:
+            if not self._current_service:
+                raise Exception("所有提供的 API Key 均无效或配额已耗尽 (quotaExceeded)")
+            
+            try:
+                request = build_request_fn(self._current_service)
+                return request.execute()
+            except Exception as e:
+                error_msg = str(e) or ""
+                is_skippable = False
+                reason = "unknown"
+                
+                # 1. 检查异常消息字符串中的关键词
+                # 包含配额耗尽、无效 Key、已过期、被封禁等情况
+                keywords = ["quotaExceeded", "API key not valid", "keyInvalid", "API key expired", "missing a valid API key"]
+                for kw in keywords:
+                    if kw.lower() in error_msg.lower():
+                        is_skippable = True
+                        reason = kw
+                        break
+                
+                # 2. 检查 HttpError 的具体状态码和内容
+                if not is_skippable:
+                    try:
+                        from googleapiclient.errors import HttpError
+                        if isinstance(e, HttpError):
+                            # 400: Invalid Key, 403: Quota/Forbidden, 429: Rate Limit
+                            if e.resp.status in (400, 403, 429):
+                                is_skippable = True
+                                reason = f"HTTP {e.resp.status}"
+                    except:
+                        pass
+                
+                if is_skippable:
+                    if self.logger:
+                        self.logger.info(f"lee-debug Key #{self.current_index + 1} failed ({reason}), trying next...")
+                    
+                    self.current_index += 1
+                    self._find_next_valid_service()
+                    continue
+                
+                # 非跳过类错误，重新抛出
+                final_msg = error_msg or repr(e)
+                if self.logger:
+                    self.logger.info(f"lee-debug execution failed: {final_msg}")
+                raise Exception(final_msg) from e
+
+
 def build_published_after(start_date: datetime.date | None) -> str | None:
     if not start_date:
         return None
@@ -88,7 +164,7 @@ def _parse_kol_input(raw: str) -> str:
 
 
 def resolve_channel_id(
-    youtube,
+    youtube_manager,
     raw: str,
     log_detail: LogFn | None = None,
     log_json: LogJsonFn | None = None,
@@ -112,7 +188,7 @@ def resolve_channel_id(
     _log(log_detail, f"resolve_channel_id request channels.list: {json.dumps(ch_body, ensure_ascii=False)}")
     try:
         _track_quota(quota_tracker, "channels.list", 1, {"handle": slug})
-        ch_resp = youtube.channels().list(part="id", forHandle=slug).execute()
+        ch_resp = youtube_manager.execute(lambda yt: yt.channels().list(part="id", forHandle=slug))
         _log_json(log_json, "resolve_channel_id response channels.list", ch_resp)
         ch_items = ch_resp.get("items") or []
         if ch_items:
@@ -139,12 +215,12 @@ def resolve_channel_id(
     )
 
     _track_quota(quota_tracker, "search.list.channel", 100, {"handle": handle, "query": query})
-    response = youtube.search().list(
+    response = youtube_manager.execute(lambda yt: yt.search().list(
         part="snippet",
         q=query,
         type="channel",
         maxResults=1,
-    ).execute()
+    ))
     _log_json(log_json, "resolve_channel_id response search.list", response)
     if response.get("items"):
         channel_id = response["items"][0]["snippet"]["channelId"]
@@ -199,7 +275,7 @@ def explain_brand_matches_for_video(
 
 
 def search_channel_brand_mentions(
-    youtube,
+    youtube_manager,
     kol: str,
     search_query: str,
     brands: list[BrandRule],
@@ -224,7 +300,7 @@ def search_channel_brand_mentions(
     result = KolProcessingResult(kol=kol)
     rules = _ensure_brand_rules(brands)
     result.channel_id = resolve_channel_id(
-        youtube,
+        youtube_manager,
         kol,
         log_detail=log_detail,
         log_json=log_json,
@@ -242,7 +318,7 @@ def search_channel_brand_mentions(
         "publishedAfter": published_after,
     }
     items = _fetch_all_search_video_items(
-        youtube,
+        youtube_manager,
         kol=kol,
         request_body=video_search_body,
         enable_full_search=enable_full_search,
@@ -255,7 +331,7 @@ def search_channel_brand_mentions(
     category_map: dict[str, str] = {}
     if enable_deep_search:
         enriched_by_video_id = _fetch_video_details_map(
-            youtube,
+            youtube_manager,
             kol=kol,
             items=items,
             log_detail=log_detail,
@@ -263,7 +339,7 @@ def search_channel_brand_mentions(
             quota_tracker=quota_tracker,
         )
         category_map = _fetch_video_category_map(
-            youtube,
+            youtube_manager,
             kol=kol,
             video_details=enriched_by_video_id,
             log_detail=log_detail,
@@ -296,7 +372,7 @@ def search_channel_brand_mentions(
 
 
 def _fetch_all_search_video_items(
-    youtube,
+    youtube_manager,
     kol: str,
     request_body: dict[str, Any],
     enable_full_search: bool = False,
@@ -319,7 +395,8 @@ def _fetch_all_search_video_items(
             f"video search.list request page={page_number} kol={kol!r}: {json.dumps(request_payload, ensure_ascii=False)}",
         )
         _track_quota(quota_tracker, "search.list.video", 100, {"kol": kol, "page": page_number})
-        response = youtube.search().list(**request_payload).execute()
+        
+        response = youtube_manager.execute(lambda yt: yt.search().list(**request_payload))
         _log_json(log_json, f"video search.list response kol={kol!r} page={page_number}", response)
 
         page_items = response.get("items", [])
@@ -348,7 +425,7 @@ def _fetch_all_search_video_items(
 
 
 def _fetch_video_details_map(
-    youtube,
+    youtube_manager,
     kol: str,
     items: list[dict[str, Any]],
     log_detail: LogFn | None = None,
@@ -374,7 +451,8 @@ def _fetch_video_details_map(
             f"videos.list request batch={batch_number} kol={kol!r} ids={len(batch_ids)}",
         )
         _track_quota(quota_tracker, "videos.list", 1, {"kol": kol, "batch": batch_number, "count": len(batch_ids)})
-        response = youtube.videos().list(**request_payload).execute()
+        
+        response = youtube_manager.execute(lambda yt: yt.videos().list(**request_payload))
         _log_json(log_json, f"videos.list response kol={kol!r} batch={batch_number}", response)
         for detail in response.get("items", []):
             details_by_id[detail["id"]] = detail
@@ -387,7 +465,7 @@ def _fetch_video_details_map(
 
 
 def _fetch_video_category_map(
-    youtube,
+    youtube_manager,
     kol: str,
     video_details: dict[str, dict[str, Any]],
     log_detail: LogFn | None = None,
@@ -413,7 +491,8 @@ def _fetch_video_category_map(
         f"videoCategories.list request kol={kol!r} ids={category_ids!r}",
     )
     _track_quota(quota_tracker, "videoCategories.list", 1, {"kol": kol, "count": len(category_ids)})
-    response = youtube.videoCategories().list(**request_payload).execute()
+    
+    response = youtube_manager.execute(lambda yt: yt.videoCategories().list(**request_payload))
     _log_json(log_json, f"videoCategories.list response kol={kol!r}", response)
     mapping = {
         item["id"]: item.get("snippet", {}).get("title", "")

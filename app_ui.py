@@ -117,10 +117,10 @@ def render_sidebar(
 
         st.subheader("🔑 核心配置")
         with st.container(border=True):
-            api_key = st.text_input(
-                "YouTube API Key",
-                type="password",
-                help="请输入你的 Google Cloud API Key",
+            api_key = st.text_area(
+                "YouTube API Keys (每行一个)",
+                height=100,
+                help="系统会在当前 Key 的配额用尽时，自动且无缝地切换到下一行的备用 Key 继续提取。",
             )
             search_query = st.text_input(
                 "搜索关键词",
