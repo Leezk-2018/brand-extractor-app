@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from brand_rules import (
     BrandMatchDetail,
@@ -59,6 +60,33 @@ def load_selected_brand_rules(
     return build_rules_for_names(brand_names, rule_map=rule_map)
 
 
+def _parse_kol_input(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    
+    if text.startswith("http://") or text.startswith("https://"):
+        parsed = urlparse(text)
+        netloc = parsed.netloc.lower()
+        if not ("youtube.com" in netloc or "youtu.be" in netloc):
+            raise ValueError(f"不支持非 YouTube 链接: {text}")
+        
+        path = parsed.path.strip("/")
+        parts = path.split("/")
+        
+        if parts:
+            if parts[0].startswith("@"):
+                return parts[0]
+            elif parts[0] in ("c", "channel", "user") and len(parts) > 1:
+                return parts[1]
+            else:
+                return parts[0]
+        else:
+            raise ValueError(f"无法从链接中解析出频道信息: {text}")
+            
+    return text
+
+
 def resolve_channel_id(
     youtube,
     raw: str,
@@ -66,7 +94,12 @@ def resolve_channel_id(
     log_json: LogJsonFn | None = None,
     quota_tracker: QuotaTrackerFn | None = None,
 ) -> str | None:
-    handle = (raw or "").strip()
+    try:
+        handle = _parse_kol_input(raw)
+    except ValueError as e:
+        _log(log_detail, f"resolve_channel_id input error: {e}")
+        raise
+
     if not handle:
         return None
 
@@ -181,6 +214,13 @@ def search_channel_brand_mentions(
     page_progress: PageProgressFn | None = None,
     quota_tracker: QuotaTrackerFn | None = None,
 ) -> KolProcessingResult:
+    # 提取核心标识（处理 URL 情况），使结果表中使用提取后的 Handle/ID
+    try:
+        kol = _parse_kol_input(kol)
+    except ValueError:
+        # 如果解析失败，这里先不做处理，留给 resolve_channel_id 统一抛出或处理
+        pass
+
     result = KolProcessingResult(kol=kol)
     rules = _ensure_brand_rules(brands)
     result.channel_id = resolve_channel_id(

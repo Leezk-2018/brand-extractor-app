@@ -247,7 +247,7 @@ def render_main_inputs() -> list[str]:
     st.subheader("👥 KOL 列表")
     with st.container(border=True):
         kols_input = st.text_area(
-            label="输入待扫描的频道：支持 Channel Handle（如 @TechSource）或 UC 开头的 Channel ID，每行一个",
+            label="输入待扫描的频道：支持 YouTube 主页链接、Channel Handle（如 @TechSource）或 Channel ID，每行一个",
             value="@rogerseng\n@JordanHetrick",
             height=150,
         )
@@ -480,6 +480,7 @@ def _render_advanced_brand_rules_editor_content(brands_list: list[str]) -> tuple
                 st.session_state["brand_rules_editor_text"] = _format_brand_rules_json(normalized_payload)
                 st.session_state["brand_rules_upload_signature"] = upload_signature
                 st.session_state["brand_rules_editor_version"] = st.session_state.get("brand_rules_editor_version", 0) + 1
+                st.session_state["active_dialog"] = "brand_rules"
                 st.rerun()
             except UnicodeDecodeError:
                 st.error("文件非 UTF-8 编码。")
@@ -540,6 +541,7 @@ def _render_advanced_brand_rules_editor_content(brands_list: list[str]) -> tuple
             st.session_state["brand_rules_editor_text"] = _format_brand_rules_json(build_brand_rules_payload(brands_list))
             st.session_state["brand_rules_upload_signature"] = None
             st.session_state["brand_rules_editor_version"] = st.session_state.get("brand_rules_editor_version", 0) + 1
+            st.session_state["active_dialog"] = "brand_rules"
             st.rerun()
             
     with btn_confirm_col:

@@ -2,7 +2,7 @@ import datetime
 import unittest
 
 from brand_rules import BrandRule
-from extractor_core import build_published_after, extract_brands, resolve_channel_id
+from extractor_core import build_published_after, extract_brands, resolve_channel_id, _parse_kol_input
 
 
 class FakeRequest:
@@ -78,6 +78,24 @@ class ExtractorCoreTests(unittest.TestCase):
             resolve_channel_id(youtube, "@example"),
             "UCSEARCHRESULT1234567890",
         )
+
+    def test_parse_kol_input_extracts_handle_from_youtube_url(self):
+        self.assertEqual(_parse_kol_input("https://www.youtube.com/@OverkillGamingOfficial"), "@OverkillGamingOfficial")
+        self.assertEqual(_parse_kol_input("https://youtube.com/@daviddifranco"), "@daviddifranco")
+        self.assertEqual(_parse_kol_input("https://www.youtube.com/@JanineDelaney/videos"), "@JanineDelaney")
+
+    def test_parse_kol_input_extracts_channel_id_from_youtube_url(self):
+        self.assertEqual(_parse_kol_input("https://www.youtube.com/channel/UC123456"), "UC123456")
+        self.assertEqual(_parse_kol_input("https://www.youtube.com/c/SomeChannel"), "SomeChannel")
+        self.assertEqual(_parse_kol_input("https://www.youtube.com/user/SomeUser"), "SomeUser")
+
+    def test_parse_kol_input_rejects_non_youtube_urls(self):
+        with self.assertRaisesRegex(ValueError, "不支持非 YouTube 链接"):
+            _parse_kol_input("https://www.instagram.com/mermaid_skillz")
+
+    def test_parse_kol_input_returns_raw_string_if_not_url(self):
+        self.assertEqual(_parse_kol_input("@TechSource"), "@TechSource")
+        self.assertEqual(_parse_kol_input("UC123456"), "UC123456")
 
 
 if __name__ == "__main__":

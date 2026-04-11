@@ -676,6 +676,7 @@ def _log_detail_dialog():
     with a1:
         if st.button("🗑️ 清空", use_container_width=True):
             st.session_state["lee_debug_logs"] = []
+            st.session_state["active_dialog"] = "logs"
             st.rerun()
     with a2:
         payload = ("\n".join(_log_entry_text(item) for item in logs) if logs else "").encode("utf-8")
